@@ -49,3 +49,15 @@ export function nextBrain(): Brain {
 }
 
 export const THINK_COOLDOWN_MS = Number(process.env.THINK_COOLDOWN_MS || 15000);
+
+/** How many agents may wait on the LLM at the same time. Keeps a 10-agent office from bursting your quota. */
+export const MAX_CONCURRENT_THINKS = Math.max(1, Number(process.env.MAX_CONCURRENT_THINKS || 3));
+
+/** Human-readable name of the configured brain, shown in the UI. */
+export function describeEngine(): string {
+    const setting = (process.env.LLM_PROVIDER || 'mixed').toLowerCase();
+    if (setting === 'claude') return `Claude CLI (${process.env.CLAUDE_MODEL || 'haiku'})`;
+    if (setting === 'chatgpt') return `ChatGPT via Codex CLI${process.env.CODEX_MODEL ? ` (${process.env.CODEX_MODEL})` : ''}`;
+    if (setting === 'ollama') return `Ollama (${process.env.OLLAMA_MODEL || 'llama3.2:latest'})`;
+    return 'Mixed: Claude + ChatGPT';
+}

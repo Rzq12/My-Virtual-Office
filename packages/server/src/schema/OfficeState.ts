@@ -13,11 +13,19 @@ export class AgentState extends Schema {
     @type('number') reputation: number;
     @type('number') riskLevel: number;
     @type('number') momentum: number;
+    @type('string') role: string;
+    @type('number') deskX: number;
+    @type('number') deskY: number;
+    @type('number') sprite: number;
 
     constructor(id: string, name: string) {
         super();
         this.id = id;
         this.name = name;
+        this.role = '';
+        this.deskX = 0;
+        this.deskY = 0;
+        this.sprite = 0;
         this.x = 0;
         this.y = 0;
         this.direction = 'down';
@@ -35,6 +43,7 @@ export class OfficeState extends Schema {
     @type({ map: AgentState }) agents = new MapSchema<AgentState>();
     @type('string') officeTime: string = new Date().toISOString();
     @type('number') timeScale: number = 1;
+    @type('string') engine: string = '';
 
     createAgent(id: string, name: string) {
         this.agents.set(id, new AgentState(id, name));

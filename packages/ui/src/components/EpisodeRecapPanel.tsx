@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FloatingPanel } from './FloatingPanel';
+import { Panel } from './Panel';
 
 type RecapPayload = {
     scenario: string;
@@ -40,14 +40,11 @@ export function EpisodeRecapPanel() {
     };
 
     return (
-        <FloatingPanel
+        <Panel
             id="episode-recap"
+            defaultCollapsed
             title="Episode Recap"
             subtitle="Export-ready run summary"
-            width={340}
-            defaultDock="left"
-            defaultY={220}
-            zIndex={15}
         >
             <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
                 <button onClick={loadRecap} style={{
@@ -83,6 +80,6 @@ export function EpisodeRecapPanel() {
                     ))}
                 </>
             )}
-        </FloatingPanel>
+        </Panel>
     );
 }

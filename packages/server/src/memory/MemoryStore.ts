@@ -169,6 +169,17 @@ export class MemoryStore {
         await this.db.run('UPDATE tasks SET assigned_to = ?, status = ? WHERE id = ?', [agentId, 'in_progress', taskId]);
     }
 
+    async updateTaskStatus(taskId: number, status: 'pending' | 'in_progress' | 'completed'): Promise<void> {
+        if (!this.db) return;
+        await this.db.run('UPDATE tasks SET status = ? WHERE id = ?', [status, taskId]);
+    }
+
+    /** Tasks that are not completed yet, oldest first (used to restore work after a restart). */
+    async getOpenTasks(): Promise<Array<{ id: number; title: string; assigned_to: string | null; status: string }>> {
+        if (!this.db) return [];
+        return this.db.all("SELECT id, title, assigned_to, status FROM tasks WHERE status != 'completed' ORDER BY id ASC");
+    }
+
     async completeTask(taskId: number): Promise<void> {
         if (!this.db) return;
         await this.db.run("UPDATE tasks SET status = 'completed', completed_at = datetime('now') WHERE id = ?", [taskId]);

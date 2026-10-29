@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { getColyseusRoom } from '../game/Game';
 import { eventBus } from '../events';
-import { FloatingPanel } from './FloatingPanel';
+import { Panel } from './Panel';
 
 const SCENARIOS = ['Startup Crunch', 'Hackathon Night', 'Incident War Room', 'Product Launch'] as const;
 const CHAOS_EVENTS = [
@@ -69,14 +69,11 @@ export function ViralControlPanel() {
     };
 
     return (
-        <FloatingPanel
+        <Panel
             id="viral-control"
+            defaultCollapsed
             title="Showrunner Controls"
             subtitle="Viral Mode Console"
-            width={330}
-            defaultDock="right"
-            defaultY={20}
-            zIndex={18}
         >
             <div style={{ fontSize: 11, color: '#babedc', marginTop: 8, marginBottom: 10 }}>
                 Last event: <strong style={{ color: '#ffd6a5' }}>{lastEvent}</strong>
@@ -84,6 +81,8 @@ export function ViralControlPanel() {
 
             <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                 <select
+                    name="scenario"
+                    aria-label="Scenario"
                     value={scenario}
                     onChange={(e) => setScenario(e.target.value)}
                     style={{
@@ -119,6 +118,7 @@ export function ViralControlPanel() {
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginBottom: 10 }}>
                 <input
                     type="checkbox"
+                    name="cinematic"
                     checked={cinematicMode}
                     onChange={(e) => setCinematicMode(e.target.checked)}
                 />
@@ -147,6 +147,7 @@ export function ViralControlPanel() {
                         <button
                             onClick={() => castVote(event.id)}
                             title="Audience vote"
+                            aria-label={`Audience vote: ${event.label}`}
                             style={{
                                 border: '1px solid rgba(255,255,255,0.12)',
                                 background: 'rgba(255, 214, 165, 0.2)',
@@ -165,6 +166,6 @@ export function ViralControlPanel() {
             <div style={{ marginTop: 8, fontSize: 11, color: '#ffd6a5', minHeight: 16 }}>
                 {voteStatus}
             </div>
-        </FloatingPanel>
+        </Panel>
     );
 }

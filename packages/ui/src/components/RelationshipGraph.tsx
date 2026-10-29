@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { eventBus } from '../events';
-import { FloatingPanel } from './FloatingPanel';
+import { Panel } from './Panel';
 
 type Edge = {
     a: string;
@@ -29,14 +29,11 @@ export function RelationshipGraph() {
     );
 
     return (
-        <FloatingPanel
+        <Panel
             id="relationship-graph"
+            defaultCollapsed
             title="Relationship Graph"
             subtitle="Alliances and rivalries"
-            width={300}
-            defaultDock="right"
-            defaultY={220}
-            zIndex={16}
         >
             {visible.length === 0 && (
                 <div style={{ fontSize: 11, color: '#cdbca4' }}>No strong alliances or rivalries yet.</div>
@@ -58,6 +55,6 @@ export function RelationshipGraph() {
                     </div>
                 );
             })}
-        </FloatingPanel>
+        </Panel>
     );
 }

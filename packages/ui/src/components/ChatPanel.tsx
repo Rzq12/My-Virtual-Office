@@ -1,56 +1,72 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { eventBus } from '../events';
 import { getColyseusRoom } from '../game/Game';
+import { Panel } from './Panel';
+import { useOffice, officeStore, agentColor } from '../store';
+
+const SYSTEM_SENDERS = ['System', '🏢 Office', '🎬 Producer', '⚠️ Chaos Engine'];
+
+function senderColor(sender: string): string {
+    if (sender === 'User') return '#ffd166';
+    if (SYSTEM_SENDERS.includes(sender)) return '#00eeff';
+    return agentColor(sender);
+}
 
 export function ChatPanel() {
-    const [messages, setMessages] = useState<{ sender: string, text: string }[]>([
-        { sender: 'System', text: 'Office environment initialized.' }
-    ]);
+    const messages = useOffice(s => s.chat);
+    const agents = useOffice(s => s.agents);
     const [input, setInput] = useState('');
-    const endRef = useRef<HTMLDivElement>(null);
+    const logRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        const handleChat = (e: any) => {
-            setMessages(prev => [...prev, e.detail]);
-        };
-        eventBus.addEventListener('chat-message', handleChat);
-        return () => eventBus.removeEventListener('chat-message', handleChat);
-    }, []);
-
-    useEffect(() => {
-        endRef.current?.scrollIntoView({ behavior: 'smooth' });
+        const log = logRef.current;
+        if (log) log.scrollTop = log.scrollHeight;
     }, [messages]);
 
     const send = () => {
-        if (!input.trim()) return;
+        const text = input.trim();
+        if (!text) return;
         const room = getColyseusRoom();
         if (room) {
-            room.send('chat', { text: input });
+            room.send('chat', { text });
             setInput('');
         } else {
-            setMessages(prev => [...prev, { sender: 'System', text: 'Error: Cannot send message, Colyseus not connected.' }]);
+            officeStore.addChat({ sender: 'System', text: 'Cannot send: not connected to the office server.' });
         }
     };
 
+    const mention = (name: string) => setInput(value => `${value}${value && !value.endsWith(' ') ? ' ' : ''}@${name} `);
+
     return (
-        <div style={{ position: 'absolute', right: 20, bottom: 20, width: 300, height: 400, backgroundColor: 'rgba(0,0,0,0.8)', color: 'white', padding: 16, borderRadius: 8, display: 'flex', flexDirection: 'column' }}>
-            <h3 style={{ margin: '0 0 10px 0' }}>Office Chat</h3>
-            <div style={{ flex: 1, overflowY: 'auto', fontSize: '14px', marginBottom: 10, paddingRight: 4 }}>
+        <Panel id="office-chat" title="💬 Office Chat" subtitle="Mention @Name to talk to someone, @all for everyone">
+            <div ref={logRef} className="chat-log" role="log" aria-live="polite">
+                {messages.length === 0 && <p className="empty">No messages yet.</p>}
                 {messages.map((m, i) => (
-                    <p key={i} style={{ margin: '6px 0', lineHeight: '1.4' }}>
-                        <strong style={{ color: m.sender === 'System' ? '#00eeff' : '#aaffaa' }}>{m.sender}:</strong> {m.text}
+                    <p key={i} className={m.text.includes('(to User)') ? 'to-user' : undefined}>
+                        <strong style={{ color: senderColor(m.sender) }}>{m.sender}:</strong> {m.text}
                     </p>
                 ))}
-                <div ref={endRef} />
             </div>
-            <input
-                type="text"
-                placeholder="Send a message..."
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && send()}
-                style={{ width: '100%', padding: '10px', boxSizing: 'border-box', background: '#333', color: 'white', border: '1px solid #444', borderRadius: 4, outline: 'none' }}
-            />
-        </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+                {agents.map(a => (
+                    <button key={a.id} type="button" className="btn btn-small" onClick={() => mention(a.name)}
+                        style={{ padding: '2px 7px', color: agentColor(a.name) }} title={`Mention ${a.name} (${a.role})`}>
+                        @{a.name}
+                    </button>
+                ))}
+            </div>
+            <form onSubmit={(e) => { e.preventDefault(); send(); }} style={{ display: 'flex', gap: 6 }}>
+                <input
+                    type="text"
+                    name="chat-message"
+                    className="field"
+                    aria-label="Message the office"
+                    placeholder="Message the team..."
+                    maxLength={500}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                />
+                <button type="submit" className="btn btn-primary" disabled={!input.trim()}>Send</button>
+            </form>
+        </Panel>
     );
 }

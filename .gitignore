@@ -15,6 +15,7 @@ dist/
 *.db
 *.sqlite
 data/
+workspace/
 
 # OS
 .DS_Store

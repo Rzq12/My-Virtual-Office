@@ -1,4 +1,6 @@
-import { exec } from 'child_process';
+import { spawn } from 'child_process';
+import { mkdir, readFile, appendFile } from 'fs/promises';
+import { resolve, relative, isAbsolute, join } from 'path';
 import { tavily, type TavilyClient, type TavilySearchResponse } from '@tavily/core';
 
 export interface ToolResult {
@@ -7,8 +9,18 @@ export interface ToolResult {
     error?: string;
 }
 
+const CODE_TIMEOUT_MS = 5000;
+const MAX_OUTPUT = 4000;
+
 export class ToolExecutor {
     private tavilyClient: TavilyClient | null = null;
+
+    /** Agents can only read and write files inside this directory. */
+    readonly workspaceDir: string;
+
+    constructor(workspaceDir = process.env.AGENT_WORKSPACE || resolve(process.cwd(), 'workspace')) {
+        this.workspaceDir = resolve(workspaceDir);
+    }
 
     private getTavilyClient(): TavilyClient | null {
         if (this.tavilyClient) return this.tavilyClient;
@@ -20,54 +32,77 @@ export class ToolExecutor {
         return null;
     }
 
-    async execute(toolName: string, params: any): Promise<ToolResult> {
+    async execute(toolName: string, params: any, context: { agentName?: string } = {}): Promise<ToolResult> {
+        const p = params || {};
         switch (toolName) {
             case 'code_execute':
-                return this.executeCode(params.code, params.language || 'javascript');
+                return this.executeCode(String(p.code || ''), String(p.language || 'javascript'));
             case 'web_search':
-                return this.webSearch(params.query);
+                return this.webSearch(String(p.query || ''));
             case 'write_note':
-                return this.writeNote(params.content);
+                return this.writeNote(String(p.content || ''), context.agentName || 'agent');
             case 'read_file':
-                return this.readFile(params.path);
+                return this.readFile(String(p.path || ''));
             default:
                 return { success: false, output: '', error: `Unknown tool: ${toolName}` };
         }
     }
 
-    private executeCode(code: string, language: string): Promise<ToolResult> {
-        return new Promise((resolve) => {
-            // Sandbox: only allow JS/TS, with timeout
-            if (language !== 'javascript' && language !== 'js') {
-                resolve({ success: false, output: '', error: `Only JavaScript is supported for sandboxed execution.` });
+    /**
+     * Runs JavaScript in a separate Node process started with the permission model:
+     * no file system, child process or worker access, an empty environment, and a hard timeout.
+     * The code is passed on stdin, never through a shell.
+     */
+    executeCode(code: string, language: string): Promise<ToolResult> {
+        return new Promise((done) => {
+            if (!['javascript', 'js'].includes(language.toLowerCase())) {
+                done({ success: false, output: '', error: 'Only JavaScript is supported for sandboxed execution.' });
+                return;
+            }
+            if (!code.trim()) {
+                done({ success: false, output: '', error: 'No code given.' });
                 return;
             }
 
-            // Wrap in a timeout to prevent infinite loops
-            const wrappedCode = `
-                const __timeout = setTimeout(() => { process.exit(1); }, 5000);
-                try {
-                    const result = (function() { ${code} })();
-                    if (result !== undefined) console.log(JSON.stringify(result));
-                    clearTimeout(__timeout);
-                } catch(e) {
-                    console.error(e.message);
-                    clearTimeout(__timeout);
-                    process.exit(1);
-                }
-            `;
+            const wrapped = `try {
+  const __result = (function () {\n${code}\n})();
+  if (__result !== undefined) console.log(typeof __result === 'string' ? __result : JSON.stringify(__result));
+} catch (e) { console.error(e && e.message ? e.message : String(e)); process.exitCode = 1; }`;
 
-            exec(`node -e "${wrappedCode.replace(/"/g, '\\"')}"`, { timeout: 6000 }, (error, stdout, stderr) => {
-                if (error) {
-                    resolve({ success: false, output: stderr || error.message, error: error.message });
+            const child = spawn(process.execPath, ['--permission', '-'], {
+                env: {},
+                stdio: ['pipe', 'pipe', 'pipe'],
+                windowsHide: true
+            });
+
+            let stdout = '';
+            let stderr = '';
+            let timedOut = false;
+            const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, CODE_TIMEOUT_MS);
+
+            child.stdout.on('data', (chunk) => { if (stdout.length < MAX_OUTPUT) stdout += chunk; });
+            child.stderr.on('data', (chunk) => { if (stderr.length < MAX_OUTPUT) stderr += chunk; });
+            child.on('error', (err) => {
+                clearTimeout(timer);
+                done({ success: false, output: '', error: err.message });
+            });
+            child.on('close', (exitCode) => {
+                clearTimeout(timer);
+                if (timedOut) {
+                    done({ success: false, output: stdout.trim(), error: `Timed out after ${CODE_TIMEOUT_MS / 1000}s.` });
+                } else if (exitCode !== 0) {
+                    done({ success: false, output: stdout.trim(), error: stderr.trim() || `Exited with code ${exitCode}` });
                 } else {
-                    resolve({ success: true, output: stdout.trim() });
+                    done({ success: true, output: stdout.trim().slice(0, MAX_OUTPUT) });
                 }
             });
+
+            child.stdin.end(wrapped);
         });
     }
 
     private async webSearch(query: string): Promise<ToolResult> {
+        if (!query.trim()) return { success: false, output: '', error: 'Empty search query.' };
         const client = this.getTavilyClient();
         if (client) {
             return this.webSearchTavily(query, client);
@@ -115,23 +150,57 @@ export class ToolExecutor {
         }
     }
 
-    private async writeNote(content: string): Promise<ToolResult> {
-        // Simple in-memory note (could be extended to file I/O)
-        console.log(`[ToolExecutor] Note: ${content}`);
-        return { success: true, output: `Note saved: "${content.slice(0, 50)}..."` };
-    }
-
-    private async readFile(path: string): Promise<ToolResult> {
-        // Sandboxed: only allow reading from a safe directory
-        const { readFile } = await import('fs/promises');
+    /** Appends a note to workspace/notes/<agent>.md so the team's output survives restarts. */
+    async writeNote(content: string, agentName: string): Promise<ToolResult> {
+        if (!content.trim()) return { success: false, output: '', error: 'Empty note.' };
         try {
-            if (path.includes('..') || path.startsWith('/')) {
-                return { success: false, output: '', error: 'Path traversal not allowed.' };
-            }
-            const content = await readFile(path, 'utf-8');
-            return { success: true, output: content.slice(0, 500) };
+            const dir = join(this.workspaceDir, 'notes');
+            await mkdir(dir, { recursive: true });
+            const slug = agentName.toLowerCase().replace(/[^a-z0-9_-]/g, '_') || 'agent';
+            await appendFile(join(dir, `${slug}.md`), `\n## ${new Date().toISOString()}\n${content.slice(0, 5000)}\n`, 'utf-8');
+            return { success: true, output: `Note saved to notes/${slug}.md: "${content.slice(0, 60)}"` };
         } catch (e: any) {
             return { success: false, output: '', error: e.message };
+        }
+    }
+
+    /** Resolves a path inside the workspace, or returns null if it would escape it. */
+    resolveWorkspacePath(path: string): string | null {
+        if (!path.trim() || isAbsolute(path)) return null;
+        const full = resolve(this.workspaceDir, path);
+        const rel = relative(this.workspaceDir, full);
+        if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return null;
+        return full;
+    }
+
+    async readFile(path: string): Promise<ToolResult> {
+        const full = this.resolveWorkspacePath(path);
+        if (!full) {
+            return { success: false, output: '', error: 'Only relative paths inside the agent workspace can be read.' };
+        }
+        try {
+            const content = await readFile(full, 'utf-8');
+            return { success: true, output: content.slice(0, 2000) };
+        } catch (e: any) {
+            if (e.code !== 'ENOENT') return { success: false, output: '', error: e.message };
+            const files = await this.listWorkspaceFiles();
+            const hint = files.length > 0 ? ` Available files: ${files.join(', ')}` : ' The workspace is empty.';
+            return { success: false, output: '', error: `File not found: ${path}.${hint}` };
+        }
+    }
+
+    /** Relative paths of up to 30 files in the workspace (used to point agents at real files). */
+    async listWorkspaceFiles(): Promise<string[]> {
+        const { readdir } = await import('fs/promises');
+        try {
+            const entries = await readdir(this.workspaceDir, { recursive: true, withFileTypes: true });
+            return entries
+                .filter(entry => entry.isFile())
+                .map(entry => relative(this.workspaceDir, join(entry.parentPath, entry.name)).replace(/\\/g, '/'))
+                .sort()
+                .slice(0, 30);
+        } catch {
+            return [];
         }
     }
 }

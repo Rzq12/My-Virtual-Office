@@ -42,8 +42,10 @@ const colyseusServer = new Server({
 // Define Rooms
 colyseusServer.define('office', OfficeRoom);
 
-// Start listening
+// Start listening. The server has no authentication, so it only accepts local connections
+// unless HOST is set explicitly (e.g. HOST=0.0.0.0 inside Docker).
 const PORT = Number(process.env.PORT || 3000);
-colyseusServer.listen(PORT).then(() => {
-    console.log(`[Server] AgentOffice Engine listening on ws://localhost:${PORT}`);
+const HOST = process.env.HOST || '127.0.0.1';
+colyseusServer.listen(PORT, HOST).then(() => {
+    console.log(`[Server] AgentOffice Engine listening on ws://${HOST}:${PORT}`);
 });

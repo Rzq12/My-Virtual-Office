@@ -46,7 +46,7 @@ https://github.com/user-attachments/assets/da76e31d-ff34-4ce1-9092-5bf9e6ee2058
 ## 🎬 How It Works
 
 ```
-You open the browser → pixel-art office loads → Alice (Engineer) and Bob (PM) spawn
+You open the browser → pixel-art office loads → a 10-person software team spawns at their desks
   → Each agent runs a think loop every ~15s via Ollama
   → LLM returns: { thought, action, target, toolCall }
   → Server executes the action (move, talk, use_tool, hire_agent)
@@ -114,7 +114,28 @@ npm run start --workspace=@agent-office/server
 npm run dev --workspace=@agent-office/ui
 ```
 
-Open **http://localhost:5173** — watch Alice and Bob come alive! 🎉
+Open **http://localhost:5173** — watch the team come alive! 🎉
+
+### The Team
+
+| Agent | Role | Owns |
+|-------|------|------|
+| Alice | Software Engineer | Backend services, APIs, tested code |
+| Bob | Product Manager | Scope, priorities, unblocking (can hire) |
+| Citra | ML Engineer | Models, training, evaluation, serving |
+| Dimas | DevOps Engineer | CI/CD, infra, containers, monitoring |
+| Eka | Fullstack Developer | End-to-end React + Node features |
+| Farhan | Tech Architect | Architecture and design reviews (can hire) |
+| Gita | QA Engineer | Test plans, automation, release quality |
+| Hana | UI/UX Designer | Flows, wireframes, accessibility |
+| Irfan | Data Engineer | Pipelines, ETL, databases |
+| Joko | Security Engineer | AppSec, auth, threat modeling |
+
+Edit `packages/server/src/agents.ts` to change the roster, or set `ACTIVE_AGENTS=alice,bob,...` in `.env` to run a subset.
+Talk to someone with `@Name` in the chat (`@all` for everyone; messages without a mention go to the PM).
+Tasks are auto-assigned by role keywords, queue per agent, and are finished with the `complete_task` tool —
+results land in `packages/server/workspace/notes/<agent>.md`. Every agent thought is one LLM call, so
+`MAX_CONCURRENT_THINKS` and `THINK_COOLDOWN_MS` control how fast the team spends your quota.
 
 ---
 

@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { getColyseusRoom } from '../game/Game';
 import { eventBus } from '../events';
+import { Panel } from './Panel';
 
 interface FurnitureItem {
     id: string;
@@ -25,6 +26,7 @@ export function LayoutEditor() {
     const [items, setItems] = useState<FurnitureItem[]>([]);
     const [selected, setSelected] = useState<FurnitureItem['type']>('desk');
     const [moveMode, setMoveMode] = useState(true);
+    const onCollapsedChange = useCallback((collapsed: boolean) => setIsOpen(!collapsed), []);
 
     useEffect(() => {
         const syncHandler = (e: Event) => {
@@ -90,41 +92,10 @@ export function LayoutEditor() {
         }
     };
 
-    if (!isOpen) {
-        return (
-            <button
-                onClick={() => setIsOpen(true)}
-                style={{
-                    position: 'absolute', left: 20, bottom: 80,
-                    padding: '8px 16px', borderRadius: 8, border: 'none',
-                    backgroundColor: '#6c5ce7', color: 'white',
-                    cursor: 'pointer', fontSize: '12px', fontWeight: 'bold',
-                    boxShadow: '0 4px 12px rgba(108,92,231,0.4)',
-                    zIndex: 10
-                }}
-            >
-                🏗️ Layout Editor
-            </button>
-        );
-    }
-
     return (
-        <div style={{
-            position: 'absolute', left: 20, bottom: 20, width: 280,
-            backgroundColor: 'rgba(10,10,30,0.95)', color: 'white',
-            padding: 16, borderRadius: 12,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-            border: '1px solid rgba(108,92,231,0.3)',
-            maxHeight: '40vh', display: 'flex', flexDirection: 'column',
-            zIndex: 20
-        }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <h3 style={{ margin: 0, fontSize: '14px' }}>🏗️ Office Layout Editor</h3>
-                <button onClick={() => setIsOpen(false)} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '16px' }}>✕</button>
-            </div>
-
+        <Panel id="layout-editor" defaultCollapsed title="🏗️ Layout Editor" subtitle="Place and drag furniture" onCollapsedChange={onCollapsedChange}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '11px', marginBottom: 8, color: '#c9cff8' }}>
-                <input type="checkbox" checked={moveMode} onChange={(e) => setMoveMode(e.target.checked)} />
+                <input type="checkbox" name="layout-drag" checked={moveMode} onChange={(e) => setMoveMode(e.target.checked)} />
                 Drag items with mouse on canvas
             </label>
 
@@ -168,11 +139,11 @@ export function LayoutEditor() {
                     }}>
                         <span>{FURNITURE_PALETTE.find(f => f.type === item.type)?.emoji} {item.label} ({Math.round(item.x)},{Math.round(item.y)})</span>
                         <div style={{ display: 'flex', gap: 2 }}>
-                            <button onClick={() => nudgeItem(item.id, -1, 0)} style={{ background: 'none', border: 'none', color: '#8ecae6', cursor: 'pointer', fontSize: '11px' }}>◀</button>
-                            <button onClick={() => nudgeItem(item.id, 1, 0)} style={{ background: 'none', border: 'none', color: '#8ecae6', cursor: 'pointer', fontSize: '11px' }}>▶</button>
-                            <button onClick={() => nudgeItem(item.id, 0, -1)} style={{ background: 'none', border: 'none', color: '#8ecae6', cursor: 'pointer', fontSize: '11px' }}>▲</button>
-                            <button onClick={() => nudgeItem(item.id, 0, 1)} style={{ background: 'none', border: 'none', color: '#8ecae6', cursor: 'pointer', fontSize: '11px' }}>▼</button>
-                            <button onClick={() => removeItem(item.id)} style={{
+                            <button aria-label={`Move ${item.label} left`} onClick={() => nudgeItem(item.id, -1, 0)} style={{ background: 'none', border: 'none', color: '#8ecae6', cursor: 'pointer', fontSize: '11px' }}>◀</button>
+                            <button aria-label={`Move ${item.label} right`} onClick={() => nudgeItem(item.id, 1, 0)} style={{ background: 'none', border: 'none', color: '#8ecae6', cursor: 'pointer', fontSize: '11px' }}>▶</button>
+                            <button aria-label={`Move ${item.label} up`} onClick={() => nudgeItem(item.id, 0, -1)} style={{ background: 'none', border: 'none', color: '#8ecae6', cursor: 'pointer', fontSize: '11px' }}>▲</button>
+                            <button aria-label={`Move ${item.label} down`} onClick={() => nudgeItem(item.id, 0, 1)} style={{ background: 'none', border: 'none', color: '#8ecae6', cursor: 'pointer', fontSize: '11px' }}>▼</button>
+                            <button aria-label={`Remove ${item.label}`} onClick={() => removeItem(item.id)} style={{
                                 background: 'none', border: 'none', color: '#e17055',
                                 cursor: 'pointer', fontSize: '12px'
                             }}>🗑</button>
@@ -188,6 +159,6 @@ export function LayoutEditor() {
             }}>
                 💾 Save Layout
             </button>
-        </div>
+        </Panel>
     );
 }

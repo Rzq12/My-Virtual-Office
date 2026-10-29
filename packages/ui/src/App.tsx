@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ChatPanel } from './components/ChatPanel';
 import { TaskBoard } from './components/TaskBoard';
-import { AgentInspector } from './components/AgentInspector';
+import { TeamPanel } from './components/TeamPanel';
 import { LayoutEditor } from './components/LayoutEditor';
 import { SystemLog } from './components/SystemLog';
 import { ViralControlPanel } from './components/ViralControlPanel';
@@ -9,24 +9,69 @@ import { HighlightsFeed } from './components/HighlightsFeed';
 import { AgentPulseBoard } from './components/AgentPulseBoard';
 import { RelationshipGraph } from './components/RelationshipGraph';
 import { EpisodeRecapPanel } from './components/EpisodeRecapPanel';
+import { useOffice } from './store';
+
+const CONNECTION_LABELS = {
+    connecting: { text: 'Connecting…', color: '#fdcb6e' },
+    connected: { text: 'Live', color: '#00b894' },
+    error: { text: 'Disconnected', color: '#ff7675' }
+} as const;
+
+function Brand() {
+    const connection = useOffice(s => s.connection);
+    const endpoint = useOffice(s => s.endpoint);
+    const engine = useOffice(s => s.engine);
+    const agentCount = useOffice(s => s.agents.length);
+    const status = CONNECTION_LABELS[connection];
+
+    return (
+        <header className="brand">
+            <h1><span aria-hidden="true">🏢</span> AgentOffice</h1>
+            <div className="brand-meta">
+                <span className="pill" title={endpoint}>
+                    <span className="dot" style={{ background: status.color }} aria-hidden="true" />
+                    {status.text}
+                </span>
+                <span className="pill">🤖 {engine || 'Engine…'}</span>
+                <span className="pill">👥 {agentCount}</span>
+            </div>
+            {connection === 'error' && (
+                <p style={{ margin: 0, fontSize: 11, color: '#ff7675' }}>
+                    Cannot reach the server at {endpoint}. Start it with <code>npm run start --workspace=@agent-office/server</code> and reload.
+                </p>
+            )}
+        </header>
+    );
+}
 
 export function App() {
+    const [drawer, setDrawer] = useState<'none' | 'left' | 'right'>('none');
+    const toggle = (side: 'left' | 'right') => setDrawer(current => (current === side ? 'none' : side));
+
     return (
         <>
-            <div style={{ position: 'absolute', bottom: 20, left: 20, color: 'white', backgroundColor: 'rgba(10,10,30,0.85)', padding: '12px 16px', borderRadius: '10px', zIndex: 10, border: '1px solid rgba(108,92,231,0.3)' }}>
-                <h1 style={{ margin: 0, fontSize: '18px', display: 'flex', alignItems: 'center', gap: 8 }}>🏢 AgentOffice</h1>
-                <p style={{ margin: '4px 0 0', opacity: 0.6, fontSize: '11px' }}>Real-time multi-agent AI simulation</p>
-            </div>
-            <ChatPanel />
-            <TaskBoard />
-            <AgentInspector agent={{ name: 'Alice', role: 'Engineer', status: 'Idle', currentTask: 'Write Scaffold' }} />
-            <LayoutEditor />
-            <SystemLog />
-            <ViralControlPanel />
-            <RelationshipGraph />
-            <HighlightsFeed />
-            <AgentPulseBoard />
-            <EpisodeRecapPanel />
+            <nav className="mobile-bar" aria-label="Panels">
+                <span className="title">🏢 AgentOffice</span>
+                <button type="button" className="btn btn-small" aria-pressed={drawer === 'left'} onClick={() => toggle('left')}>👥 Team</button>
+                <button type="button" className="btn btn-small" aria-pressed={drawer === 'right'} onClick={() => toggle('right')}>💬 Chat</button>
+            </nav>
+
+            <aside className={`sidebar left${drawer === 'left' ? ' open' : ''}`} aria-label="Team and tasks">
+                <Brand />
+                <TeamPanel />
+                <TaskBoard />
+                <AgentPulseBoard />
+                <LayoutEditor />
+            </aside>
+
+            <aside className={`sidebar right${drawer === 'right' ? ' open' : ''}`} aria-label="Office feed">
+                <ChatPanel />
+                <SystemLog />
+                <HighlightsFeed />
+                <ViralControlPanel />
+                <RelationshipGraph />
+                <EpisodeRecapPanel />
+            </aside>
         </>
     );
 }

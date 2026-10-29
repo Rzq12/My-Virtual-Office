@@ -4,12 +4,92 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AgentOffice</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏢</text></svg>" />
     <style>
-      body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #1a1a2e; color: #fff; font-family: 'Inter', sans-serif; }
-      #phaser-container { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 1; }
-      #ui-root { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 2; pointer-events: none; }
-      /* Allow clicks to pass through empty UI space to Phaser */
-      #ui-root > * { pointer-events: auto; }
+      :root {
+        --left: 300px;
+        --right: 340px;
+        --bar: 0px;
+        --bg: #0f1022;
+        --sidebar: #12132b;
+        --panel: #181a37;
+        --panel-head: #1e2145;
+        --border: rgba(255, 255, 255, 0.08);
+        --text: #e8ebff;
+        --muted: #9a9fc8;
+        --accent: #7c6cf0;
+        --accent-strong: #6c5ce7;
+        --ok: #00b894;
+        --warn: #fdcb6e;
+        --danger: #ff7675;
+        color-scheme: dark;
+      }
+      @media (min-width: 1500px) { :root { --left: 320px; --right: 380px; } }
+      * { box-sizing: border-box; }
+      body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; }
+      button, input, select { font: inherit; }
+
+      #phaser-container { position: absolute; top: var(--bar); bottom: 0; left: var(--left); right: var(--right); z-index: 1; overflow: hidden; }
+      #ui-root { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+
+      .sidebar { position: absolute; top: var(--bar); bottom: 0; pointer-events: auto; overflow-y: auto; overflow-x: hidden;
+        display: flex; flex-direction: column; gap: 10px; padding: 12px; background: var(--sidebar); scrollbar-width: thin; }
+      .sidebar.left { left: 0; width: var(--left); border-right: 1px solid var(--border); }
+      .sidebar.right { right: 0; width: var(--right); border-left: 1px solid var(--border); }
+
+      .brand { display: flex; flex-direction: column; gap: 6px; padding: 4px 2px 6px; }
+      .brand h1 { margin: 0; font-size: 18px; display: flex; align-items: center; gap: 8px; }
+      .brand-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px; color: var(--muted); }
+      .pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px; background: rgba(255,255,255,0.06); border: 1px solid var(--border); }
+      .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; }
+
+      .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; flex: none; }
+      .panel-header { display: flex; align-items: center; gap: 6px; background: var(--panel-head); border-radius: 10px; }
+      .panel.expanded .panel-header { border-radius: 10px 10px 0 0; border-bottom: 1px solid var(--border); }
+      .panel-toggle { flex: 1; display: flex; align-items: center; gap: 8px; text-align: left; background: none; border: none; color: var(--text); padding: 9px 10px; cursor: pointer; border-radius: 10px; }
+      .panel-title { display: block; font-size: 13px; font-weight: 700; }
+      .panel-subtitle { display: block; font-size: 10px; color: var(--muted); }
+      .panel-chevron { width: 12px; color: var(--muted); font-size: 11px; }
+      .panel-body { padding: 10px 12px; }
+      .panel-extra { padding-right: 8px; }
+
+      .field { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #3a3d66; background: #10122b; color: var(--text); font-size: 12px; }
+      .field::placeholder { color: #7d82ad; }
+      .btn { border: 1px solid var(--border); border-radius: 6px; padding: 7px 12px; font-size: 12px; cursor: pointer; background: rgba(255,255,255,0.06); color: var(--text); }
+      .btn:hover { background: rgba(255,255,255,0.12); }
+      .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+      .btn-primary { background: var(--accent-strong); border-color: transparent; color: #fff; font-weight: 700; }
+      .btn-primary:hover { background: var(--accent); }
+      .btn-small { padding: 4px 8px; font-size: 11px; }
+      .btn-icon { padding: 2px 6px; font-size: 11px; background: none; border: none; color: #8ecae6; cursor: pointer; border-radius: 4px; }
+      .btn:focus-visible, .btn-icon:focus-visible, .panel-toggle:focus-visible, .field:focus-visible, .agent-row:focus-visible { outline: 2px solid #a29bfe; outline-offset: 1px; }
+      .muted { color: var(--muted); }
+      .empty { color: var(--muted); font-style: italic; font-size: 11px; margin: 0; }
+
+      .chat-log { height: 320px; overflow-y: auto; font-size: 13px; line-height: 1.45; padding-right: 4px; margin-bottom: 8px; }
+      .chat-log p { margin: 0 0 7px; overflow-wrap: anywhere; }
+      .chat-log .to-user { background: rgba(124,108,240,0.14); border-radius: 6px; padding: 4px 6px; }
+      .scroll-list { max-height: 260px; overflow-y: auto; }
+
+      .agent-row { display: grid; grid-template-columns: 10px 1fr auto; gap: 8px; align-items: center; width: 100%; text-align: left; background: none; border: 1px solid transparent; color: var(--text); padding: 6px; border-radius: 6px; cursor: pointer; }
+      .agent-row:hover { background: rgba(255,255,255,0.05); }
+      .agent-row[aria-pressed="true"] { background: rgba(124,108,240,0.18); border-color: rgba(124,108,240,0.5); }
+      .agent-name { font-size: 12px; font-weight: 700; }
+      .agent-role { font-size: 10px; color: var(--muted); }
+      .badge { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: rgba(255,255,255,0.08); color: var(--muted); white-space: nowrap; }
+
+      .mobile-bar { display: none; }
+
+      @media (max-width: 1100px) {
+        :root { --left: 260px; --right: 300px; }
+      }
+      @media (max-width: 860px) {
+        :root { --left: 0px; --right: 0px; --bar: 48px; }
+        .mobile-bar { display: flex; position: absolute; top: 0; left: 0; right: 0; height: 48px; align-items: center; gap: 8px; padding: 0 12px; background: var(--sidebar); border-bottom: 1px solid var(--border); pointer-events: auto; z-index: 5; }
+        .mobile-bar .title { font-weight: 700; flex: 1; }
+        .sidebar { display: none; width: 100% !important; left: 0; right: 0; border: none; z-index: 4; }
+        .sidebar.open { display: flex; }
+      }
     </style>
   </head>
   <body>

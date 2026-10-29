@@ -8,10 +8,17 @@ export default defineConfig({
     server: {
         port: 5173,
         proxy: {
-            '/api': 'http://localhost:3000',
+            '/api': 'http://127.0.0.1:3000',
         }
     },
     build: {
-        outDir: 'dist'
+        outDir: 'dist',
+        // Phaser alone is ~1.2 MB; keep it in its own long-lived chunk.
+        chunkSizeWarningLimit: 1300,
+        rollupOptions: {
+            output: {
+                manualChunks: { phaser: ['phaser'], colyseus: ['colyseus.js'] }
+            }
+        }
     }
 });

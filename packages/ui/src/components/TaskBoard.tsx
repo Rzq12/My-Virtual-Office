@@ -1,145 +1,104 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { getColyseusRoom } from '../game/Game';
+import { Panel } from './Panel';
+import { useOffice, TaskStatus } from '../store';
 
-interface TaskItem {
-    id: number;
-    title: string;
-    assigned_to: string;
-    status: string;
-}
+const STATUS_ORDER: Record<TaskStatus, number> = { in_progress: 0, pending: 1, completed: 2 };
+
+const statusColor = (s: TaskStatus) => {
+    if (s === 'completed') return '#00b894';
+    if (s === 'in_progress') return '#fdcb6e';
+    return '#b2bec3';
+};
+
+const statusLabel = (s: TaskStatus) => {
+    if (s === 'completed') return '✅ Done';
+    if (s === 'in_progress') return '🔄 In progress';
+    return '⏳ Queued';
+};
 
 export function TaskBoard() {
-    const [tasks, setTasks] = useState<TaskItem[]>([]);
+    const tasks = useOffice(s => s.tasks);
+    const agents = useOffice(s => s.agents);
     const [newTask, setNewTask] = useState('');
     const [targetAgent, setTargetAgent] = useState('auto');
+    const [showDone, setShowDone] = useState(false);
 
-    useEffect(() => {
-        const checkRoom = setInterval(() => {
-            const room = getColyseusRoom();
-            if (room) {
-                room.onMessage('task-update', (data: any) => {
-                    setTasks(prev => {
-                        const existing = prev.find(t => t.title === data.task);
-                        if (existing) {
-                            return prev.map(t => t.title === data.task ? { ...t, status: data.status, assigned_to: data.agentId } : t);
-                        }
-                        return [...prev, { id: Date.now(), title: data.task, assigned_to: data.agentId, status: data.status }];
-                    });
-                });
-                room.onMessage('tasks-sync', (serverTasks: any[]) => {
-                    setTasks(serverTasks.map(t => ({
-                        id: t.id,
-                        title: t.title,
-                        assigned_to: t.assigned_to || '',
-                        status: t.status
-                    })));
-                });
-                clearInterval(checkRoom);
-            }
-        }, 500);
-        return () => clearInterval(checkRoom);
-    }, []);
+    const names = useMemo(() => Object.fromEntries(agents.map(a => [a.id, a.name])), [agents]);
+    const sorted = useMemo(
+        () => [...tasks].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || b.id - a.id),
+        [tasks]
+    );
+    const doneCount = tasks.filter(t => t.status === 'completed').length;
+    const visible = showDone ? sorted : sorted.filter(t => t.status !== 'completed');
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!newTask.trim()) return;
+        const title = newTask.trim();
+        if (!title) return;
         const room = getColyseusRoom();
         if (room) {
-            room.send('assign-task', { title: newTask, agentId: targetAgent === 'auto' ? undefined : targetAgent });
+            room.send('assign-task', { title, agentId: targetAgent === 'auto' ? undefined : targetAgent });
             setNewTask('');
         }
     };
 
-    const statusColor = (s: string) => {
-        if (s === 'completed') return '#00b894';
-        if (s === 'in_progress') return '#fdcb6e';
-        return '#dfe6e9';
-    };
-
-    const statusIcon = (s: string) => {
-        if (s === 'completed') return '✅';
-        if (s === 'in_progress') return '🔄';
-        return '⏳';
-    };
-
     return (
-        <div style={{
-            position: 'absolute', left: 20, top: 20, width: 280,
-            backgroundColor: 'rgba(10,10,30,0.92)', color: 'white',
-            padding: 16, borderRadius: 12,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-            backdropFilter: 'blur(8px)',
-            border: '1px solid rgba(108,92,231,0.3)',
-            maxHeight: '50vh', display: 'flex', flexDirection: 'column'
-        }}>
-            <h3 style={{ margin: '0 0 10px 0', fontSize: '14px', display: 'flex', alignItems: 'center', gap: 6 }}>
-                📋 Task Board
-            </h3>
-
-            {/* Task Assignment Form */}
+        <Panel id="task-board" title="📋 Task Board" subtitle={`${tasks.length - doneCount} open · ${doneCount} done`}>
             <form onSubmit={handleSubmit} style={{ marginBottom: 10 }}>
                 <input
                     type="text"
+                    name="task-title"
+                    className="field"
+                    aria-label="Task title"
+                    placeholder="Describe a task..."
+                    maxLength={200}
                     value={newTask}
                     onChange={(e) => setNewTask(e.target.value)}
-                    placeholder="Assign a task..."
-                    style={{
-                        width: '100%', padding: '8px 10px', borderRadius: 6,
-                        border: '1px solid #444', backgroundColor: '#1a1a3e',
-                        color: 'white', fontSize: '12px', outline: 'none',
-                        boxSizing: 'border-box', marginBottom: 6
-                    }}
+                    style={{ marginBottom: 6 }}
                 />
                 <div style={{ display: 'flex', gap: 6 }}>
                     <select
+                        name="task-assignee"
+                        className="field"
+                        aria-label="Assign to"
                         value={targetAgent}
                         onChange={(e) => setTargetAgent(e.target.value)}
-                        style={{
-                            flex: 1, padding: '6px', borderRadius: 6,
-                            border: '1px solid #444', backgroundColor: '#1a1a3e',
-                            color: '#aaa', fontSize: '11px'
-                        }}
+                        style={{ flex: 1, minWidth: 0 }}
                     >
-                        <option value="auto">🤖 Auto-assign</option>
-                        <option value="alice">Alice (Engineer)</option>
-                        <option value="bob">Bob (PM)</option>
+                        <option value="auto">🤖 Auto-assign (best role match)</option>
+                        {agents.map(a => (
+                            <option key={a.id} value={a.id}>{a.name} — {a.role}</option>
+                        ))}
                     </select>
-                    <button type="submit" style={{
-                        padding: '6px 14px', borderRadius: 6, border: 'none',
-                        backgroundColor: '#6c5ce7', color: 'white', fontSize: '11px',
-                        cursor: 'pointer', fontWeight: 'bold'
-                    }}>
-                        Assign
-                    </button>
+                    <button type="submit" className="btn btn-primary" disabled={!newTask.trim()}>Assign</button>
                 </div>
             </form>
 
-            {/* Task List */}
-            <div style={{ flex: 1, overflowY: 'auto', fontSize: '12px' }}>
-                {tasks.length === 0 && (
-                    <p style={{ color: '#666', fontStyle: 'italic', margin: 0, fontSize: '11px' }}>
-                        No tasks yet. Type above to assign work to agents!
-                    </p>
+            <div className="scroll-list" style={{ fontSize: 12 }}>
+                {visible.length === 0 && (
+                    <p className="empty">{tasks.length === 0 ? 'No tasks yet. Describe one above to put the team to work.' : 'No open tasks.'}</p>
                 )}
-                {tasks.map(task => (
+                {visible.map(task => (
                     <div key={task.id} style={{
                         padding: '6px 8px', marginBottom: 4, borderRadius: 6,
                         backgroundColor: 'rgba(255,255,255,0.05)',
                         borderLeft: `3px solid ${statusColor(task.status)}`
                     }}>
-                        <div style={{ fontWeight: 'bold', fontSize: '11px' }}>
-                            {statusIcon(task.status)} {task.title}
+                        <div style={{ fontWeight: 700, fontSize: 11 }}>{task.title}</div>
+                        <div style={{ fontSize: 10, color: '#9a9fc8', marginTop: 2, display: 'flex', justifyContent: 'space-between', gap: 6 }}>
+                            <span>→ {names[task.agentId] || task.agentId || 'Unassigned'}</span>
+                            <span>{statusLabel(task.status)}</span>
                         </div>
-                        <div style={{ fontSize: '10px', color: '#888', marginTop: 2 }}>
-                            → {task.assigned_to || 'Unassigned'}
-                        </div>
+                        {task.summary && <div style={{ fontSize: 10, color: '#cfe9df', marginTop: 3 }}>{task.summary}</div>}
                     </div>
                 ))}
             </div>
-
-            <div style={{ marginTop: 8, fontSize: '10px', color: '#555', borderTop: '1px solid #333', paddingTop: 6 }}>
-                🤖 Engine: Ollama Local • 💾 SQLite Persistence
-            </div>
-        </div>
+            {doneCount > 0 && (
+                <button type="button" className="btn btn-small" style={{ marginTop: 6 }} onClick={() => setShowDone(v => !v)}>
+                    {showDone ? 'Hide completed' : `Show ${doneCount} completed`}
+                </button>
+            )}
+        </Panel>
     );
 }

@@ -2,8 +2,22 @@ import Phaser from 'phaser';
 import * as Colyseus from 'colyseus.js';
 import { OfficeState, AgentState } from './schema';
 import { eventBus } from '../events';
+import { officeStore, tasksFromRows, subscribe, getSnapshot } from '../store';
 
 let activeRoom: Colyseus.Room<OfficeState> | undefined;
+
+const CHARACTER_SHEETS = 6;
+// Tints for agents beyond the six base sprites so every teammate looks distinct.
+const SPRITE_TINTS = [0xffffff, 0xffc9c9, 0xc9e4ff, 0xd4ffc9, 0xfff1c9, 0xe9c9ff];
+const LABEL_FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+// Text is rasterised at this multiple so it stays sharp up to the max camera zoom (4x) on HiDPI screens.
+const TEXT_RESOLUTION = Math.min(8, Math.ceil((typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1) * 4));
+
+/** Zoom that fits the whole square office into a viewport of the given size. */
+export function fitZoom(viewWidth: number, viewHeight: number, worldSize: number): number {
+    const zoom = Math.min(viewWidth, viewHeight) / worldSize;
+    return Math.max(0.5, Math.min(3, Math.floor(zoom * 20) / 20));
+}
 
 export function getColyseusRoom() {
     return activeRoom;
@@ -34,7 +48,10 @@ export class OfficeScene extends Phaser.Scene {
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
     private room?: Colyseus.Room;
     private agentSprites: Map<string, Phaser.GameObjects.Container> = new Map();
-    private statusText!: Phaser.GameObjects.Text;
+    private deskGraphics?: Phaser.GameObjects.Graphics;
+    private deskLabels: Map<string, Phaser.GameObjects.Text> = new Map();
+    private bubbleDepth = 20;
+    private userZoomed = false;
     private followTarget: Phaser.GameObjects.Container | null = null;
     private cinematicMode = true;
     private cinematicReleaseAt = 0;
@@ -50,42 +67,33 @@ export class OfficeScene extends Phaser.Scene {
     }
 
     preload() {
-        this.load.spritesheet('char_0', '/assets/characters/char_0.png', {
-            frameWidth: 16,
-            frameHeight: 32
-        });
-        this.load.spritesheet('char_1', '/assets/characters/char_1.png', {
-            frameWidth: 16,
-            frameHeight: 32
-        });
+        for (let i = 0; i < CHARACTER_SHEETS; i++) {
+            this.load.spritesheet(`char_${i}`, `/assets/characters/char_${i}.png`, {
+                frameWidth: 16,
+                frameHeight: 32
+            });
+        }
     }
 
     create() {
         try {
-            console.log("Phaser create() started");
-            this.statusText = this.add.text(10, 10, 'Colyseus Sync: Connecting...', { color: '#ffffaa', fontSize: '14px' });
-            this.statusText.setScrollFactor(0);
-            this.statusText.setDepth(100);
+            // pixelArt mode scales textures with nearest-neighbour, which turns small text into a smear
+            // at non-integer zoom. Render every Text at high resolution with smooth filtering instead.
+            this.events.on(Phaser.Scenes.Events.ADDED_TO_SCENE, (obj: Phaser.GameObjects.GameObject) => {
+                if (obj instanceof Phaser.GameObjects.Text && obj.style.resolution !== TEXT_RESOLUTION) {
+                    obj.setResolution(TEXT_RESOLUTION);
+                    obj.texture.setFilter(Phaser.Textures.FilterMode.LINEAR);
+                }
+            });
 
-            let hasAnims = false;
-
-            // Create animations for character 0
-            if (this.textures.exists('char_0')) {
-                const anims = this.anims;
-                anims.create({ key: 'char_0-walk-down', frames: anims.generateFrameNumbers('char_0', { start: 0, end: 2 }), frameRate: 8, repeat: -1 });
-                anims.create({ key: 'char_0-walk-up', frames: anims.generateFrameNumbers('char_0', { start: 7, end: 9 }), frameRate: 8, repeat: -1 });
-                anims.create({ key: 'char_0-walk-right', frames: anims.generateFrameNumbers('char_0', { start: 14, end: 16 }), frameRate: 8, repeat: -1 });
-                hasAnims = true;
+            const anims = this.anims;
+            for (let i = 0; i < CHARACTER_SHEETS; i++) {
+                const key = `char_${i}`;
+                if (!this.textures.exists(key)) continue;
+                anims.create({ key: `${key}-walk-down`, frames: anims.generateFrameNumbers(key, { start: 0, end: 2 }), frameRate: 8, repeat: -1 });
+                anims.create({ key: `${key}-walk-up`, frames: anims.generateFrameNumbers(key, { start: 7, end: 9 }), frameRate: 8, repeat: -1 });
+                anims.create({ key: `${key}-walk-right`, frames: anims.generateFrameNumbers(key, { start: 14, end: 16 }), frameRate: 8, repeat: -1 });
             }
-            // Create animations for character 1
-            if (this.textures.exists('char_1')) {
-                const anims = this.anims;
-                anims.create({ key: 'char_1-walk-down', frames: anims.generateFrameNumbers('char_1', { start: 0, end: 2 }), frameRate: 8, repeat: -1 });
-                anims.create({ key: 'char_1-walk-up', frames: anims.generateFrameNumbers('char_1', { start: 7, end: 9 }), frameRate: 8, repeat: -1 });
-                anims.create({ key: 'char_1-walk-right', frames: anims.generateFrameNumbers('char_1', { start: 14, end: 16 }), frameRate: 8, repeat: -1 });
-            }
-
-            console.log("Animations created: ", hasAnims);
 
             const gridSize = this.gridSize;
             const g = this.add.graphics();
@@ -144,9 +152,9 @@ export class OfficeScene extends Phaser.Scene {
             g.fillRect(350, 410, 4, 40);
 
             // Room labels
-            this.add.text(132, 46, '🏢 Meeting Room', { fontSize: '10px', color: '#b8a9d4' }).setOrigin(0.5);
-            this.add.text(380, 46, '💡 Collab Area', { fontSize: '10px', color: '#e8a87c' }).setOrigin(0.5);
-            this.add.text(438, 364, '☕ Coffee & Pantry', { fontSize: '10px', color: '#7fcdaa' }).setOrigin(0.5);
+            this.add.text(132, 46, '🏢 Meeting Room', { fontFamily: LABEL_FONT, fontSize: '10px', color: '#b8a9d4' }).setOrigin(0.5);
+            this.add.text(380, 46, '💡 Collab Area', { fontFamily: LABEL_FONT, fontSize: '10px', color: '#e8a87c' }).setOrigin(0.5);
+            this.add.text(438, 364, '☕ Coffee & Pantry', { fontFamily: LABEL_FONT, fontSize: '10px', color: '#7fcdaa' }).setOrigin(0.5);
 
             // ═══════════════════════════════════════════
             //  MEETING ROOM FURNITURE
@@ -221,67 +229,9 @@ export class OfficeScene extends Phaser.Scene {
             g.fillStyle(0x6c5ce7, 0.6);
             g.fillCircle(430, 148, 14);
 
-            // ═══════════════════════════════════════════
-            //  WORK DESKS (with chairs in front)
-            // ═══════════════════════════════════════════
-
-            const drawWorkstation = (x: number, y: number, label: string, occupied: boolean) => {
-                // Desk surface
-                g.fillStyle(0x5a3e28, 1);
-                g.fillRect(x, y, 56, 28);
-                g.fillStyle(0x6d4c2e, 1);
-                g.fillRect(x + 2, y + 2, 52, 24);
-
-                // Monitor
-                g.fillStyle(0x2d3436, 1);
-                g.fillRect(x + 6, y + 3, 22, 14); // bezel
-                g.fillStyle(occupied ? 0x74b9ff : 0x2d3436, 1);
-                g.fillRect(x + 8, y + 5, 18, 10); // screen glow
-                g.fillStyle(0x636e72, 1);
-                g.fillRect(x + 14, y + 17, 10, 3); // stand
-                g.fillRect(x + 10, y + 20, 18, 2); // base
-
-                // Keyboard
-                g.fillStyle(0xb2bec3, 1);
-                g.fillRect(x + 6, y + 22, 18, 4);
-
-                // Mouse
-                g.fillStyle(0xb2bec3, 1);
-                g.fillRect(x + 28, y + 22, 5, 4);
-
-                // Notepad
-                g.fillStyle(0xffeaa7, 1);
-                g.fillRect(x + 36, y + 6, 12, 16);
-                g.lineStyle(1, 0xfdcb6e, 0.8);
-                g.beginPath();
-                g.moveTo(x + 38, y + 10); g.lineTo(x + 46, y + 10);
-                g.moveTo(x + 38, y + 14); g.lineTo(x + 46, y + 14);
-                g.moveTo(x + 38, y + 18); g.lineTo(x + 44, y + 18);
-                g.strokePath();
-
-                // Pen
-                g.fillStyle(0x0984e3, 1);
-                g.fillRect(x + 50, y + 8, 2, 12);
-
-                // Coffee mug
-                g.fillStyle(0xd63031, 1);
-                g.fillCircle(x + 37, y + 24, 3);
-                g.fillStyle(0x2d3436, 1);
-                g.fillCircle(x + 37, y + 24, 1.5);
-
-                // Office chair (below desk)
-                g.fillStyle(0x2d3436, 1);
-                g.fillCircle(x + 22, y + 38, 8);
-                g.fillStyle(occupied ? 0x6c5ce7 : 0x4a4a6a, 1);
-                g.fillCircle(x + 22, y + 38, 6);
-
-                // Label
-                this.add.text(x + 28, y - 6, label, { fontSize: '8px', color: '#a0a0c0' }).setOrigin(0.5);
-            };
-
-            drawWorkstation(64, 240, '💻 Alice\'s Desk', true);
-            drawWorkstation(64, 320, '💻 Bob\'s Desk', true);
-            drawWorkstation(64, 400, '💻 Vacant', false);
+            // Work desks are drawn per agent in drawWorkstation() once the roster arrives.
+            this.deskGraphics = this.add.graphics();
+            this.deskGraphics.setDepth(1);
 
             // ═══════════════════════════════════════════
             //  COFFEE & PANTRY AREA
@@ -394,12 +344,6 @@ export class OfficeScene extends Phaser.Scene {
             g.fillRect(545, 155, 6, 2); // paper slot
             this.add.text(555, 164, '🖨️', { fontSize: '8px' }).setOrigin(0.5);
 
-            // Welcome mat / rug at center
-            g.fillStyle(0x6c5ce7, 0.15);
-            g.fillRect(200, 240, 120, 80);
-            g.lineStyle(1, 0x6c5ce7, 0.3);
-            g.strokeRect(200, 240, 120, 80);
-
             // ═══════════════════════════════════════════
             //  SUBTLE GRID (very faint)
             // ═══════════════════════════════════════════
@@ -412,11 +356,26 @@ export class OfficeScene extends Phaser.Scene {
             g.strokePath();
 
             this.cameras.main.setBackgroundColor('#16213e');
-            this.cameras.main.setZoom(2);
+            this.cameras.main.setZoom(fitZoom(this.scale.width, this.scale.height, gridSize));
             this.cameras.main.centerOn(gridSize / 2, gridSize / 2);
-            this.cameras.main.setBounds(0, 0, gridSize, gridSize);
+            this.scale.on(Phaser.Scale.Events.RESIZE, (size: Phaser.Structs.Size) => {
+                if (!this.userZoomed) this.cameras.main.setZoom(fitZoom(size.width, size.height, gridSize));
+            });
             this.customLayoutLayer = this.add.container(0, 0);
             this.customLayoutLayer.setDepth(4);
+
+            // Follow whichever agent is focused from the UI (team list) or by clicking a sprite.
+            let lastFocus: string | null = null;
+            const unsubscribe = subscribe(() => {
+                const focusedId = getSnapshot().focusedId;
+                if (focusedId === lastFocus) return;
+                this.setFocusRing(lastFocus, false);
+                lastFocus = focusedId;
+                this.setFocusRing(focusedId, true);
+                this.followTarget = focusedId ? this.agentSprites.get(focusedId) || null : null;
+                this.cinematicReleaseAt = 0;
+            });
+            this.events.once(Phaser.Scenes.Events.SHUTDOWN, unsubscribe);
 
             if (this.input.keyboard) {
                 this.cursors = this.input.keyboard.createCursorKeys();
@@ -454,8 +413,10 @@ export class OfficeScene extends Phaser.Scene {
                 this.layoutDragItemId = null;
             });
             this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _objects: Phaser.GameObjects.GameObject[], _deltaX: number, deltaY: number) => {
-                const nextZoom = Phaser.Math.Clamp(this.cameras.main.zoom - deltaY * 0.001, 1, 3);
+                const minZoom = fitZoom(this.scale.width, this.scale.height, this.gridSize) * 0.8;
+                const nextZoom = Phaser.Math.Clamp(this.cameras.main.zoom - deltaY * 0.001, minZoom, 4);
                 this.cameras.main.setZoom(nextZoom);
+                this.userZoomed = true;
             });
 
             const toMoveDirection = (event: KeyboardEvent): 'left' | 'right' | 'up' | 'down' | null => {
@@ -502,67 +463,79 @@ export class OfficeScene extends Phaser.Scene {
     }
 
     async connectToServer() {
+        const wsEndpoint = resolveWsEndpoint();
         try {
-            console.log("Connecting to Colyseus...");
-            const wsEndpoint = resolveWsEndpoint();
-            this.statusText.setText(`Colyseus Sync: Connecting to ${wsEndpoint}...`).setColor('#ffffaa');
+            officeStore.setConnection('connecting', wsEndpoint);
             const client = new Colyseus.Client(wsEndpoint);
             this.room = await client.joinOrCreate('office');
+            const room = this.room;
+            activeRoom = room as Colyseus.Room<OfficeState>;
+            officeStore.setConnection('connected', wsEndpoint);
+            room.onLeave(() => officeStore.setConnection('error', wsEndpoint));
+            room.onError(() => officeStore.setConnection('error', wsEndpoint));
 
-            console.log("Room joined successfully!", this.room.sessionId);
-            this.statusText.setText('Colyseus Sync: Connected (Waiting for state...)').setColor('#aaffaa');
+            // Register every message handler right after joining: the server sends history,
+            // tasks and layout from onJoin, and anything without a handler is dropped.
+            room.onMessage('chat', (message: any) => officeStore.addChat(message));
+            room.onMessage('chat-history', (messages: any) => officeStore.setChat(Array.isArray(messages) ? messages : []));
+            room.onMessage('tasks-sync', (rows: any) => officeStore.setTasks(tasksFromRows(rows)));
+            room.onMessage('task-update', (task: any) => officeStore.upsertTask({
+                id: Number(task.id),
+                title: String(task.title || ''),
+                agentId: String(task.agentId || ''),
+                status: task.status,
+                summary: task.summary
+            }));
+            room.onMessage('highlight-history', (items: any) => {
+                if (!Array.isArray(items)) return;
+                [...items].reverse().forEach(item => eventBus.dispatchEvent(new CustomEvent('highlight-event', { detail: item })));
+            });
+            room.onMessage('highlight-event', (message: any) => {
+                eventBus.dispatchEvent(new CustomEvent('highlight-event', { detail: message }));
+                if (this.cinematicMode && message?.agentId) {
+                    this.focusAgentTemporarily(message.agentId);
+                }
+            });
+            room.onMessage('scenario-event', (message: any) => {
+                eventBus.dispatchEvent(new CustomEvent('scenario-event', { detail: message }));
+            });
+            room.onMessage('relationship-update', (message: any) => {
+                eventBus.dispatchEvent(new CustomEvent('relationship-update', { detail: message }));
+            });
+            room.onMessage('layout-sync', (message: any) => {
+                this.layoutItems = Array.isArray(message?.layout) ? message.layout : [];
+                this.renderCustomLayout(this.layoutItems);
+                eventBus.dispatchEvent(new CustomEvent('layout-sync', { detail: { items: this.layoutItems } }));
+            });
+            room.onStateChange((state: any) => officeStore.setEngine(String(state.engine || '')));
 
-            // Wait for the first actual state payload from the server before reading
-            this.room.onStateChange.once((state: any) => {
-                activeRoom = this.room as Colyseus.Room<OfficeState>;
-                console.log("First state payload arrived!", state.toJSON());
-                console.log("Agents map size:", state.agents?.size);
-                this.statusText.setText('Colyseus Sync: Active!').setColor('#00ff00');
-
-                // Bind chat bus
-                this.room!.onMessage('chat', (message: any) => {
-                    eventBus.dispatchEvent(new CustomEvent('chat-message', { detail: message }));
-                });
-                this.room!.onMessage('highlight-event', (message: any) => {
-                    eventBus.dispatchEvent(new CustomEvent('highlight-event', { detail: message }));
-                    if (this.cinematicMode && message?.agentId) {
-                        this.focusAgentTemporarily(message.agentId);
-                    }
-                });
-                this.room!.onMessage('scenario-event', (message: any) => {
-                    eventBus.dispatchEvent(new CustomEvent('scenario-event', { detail: message }));
-                });
-                this.room!.onMessage('relationship-update', (message: any) => {
-                    eventBus.dispatchEvent(new CustomEvent('relationship-update', { detail: message }));
-                });
-                this.room!.onMessage('layout-sync', (message: any) => {
-                    this.layoutItems = Array.isArray(message?.layout) ? message.layout : [];
-                    this.renderCustomLayout(this.layoutItems);
-                    eventBus.dispatchEvent(new CustomEvent('layout-sync', { detail: { items: this.layoutItems } }));
-                });
-
+            // Wait for the first actual state payload from the server before reading agents
+            room.onStateChange.once((state: any) => {
                 state.agents.onAdd((agent: AgentState, sessionId: string) => {
-                    console.log(`[Colyseus] Agent added: ${agent.name} at (${agent.x}, ${agent.y})`);
                     const container = this.add.container(agent.x * 16, agent.y * 16);
+                    container.setDepth(10);
+                    this.drawWorkstation(sessionId, agent.deskX, agent.deskY, agent.role || agent.name);
 
-                    let sprite;
-                    let charKey = 'char_0';
-                    if (agent.name.includes('Bob')) charKey = 'char_1';
-
+                    const spriteIndex = Number(agent.sprite || 0);
+                    const charKey = `char_${spriteIndex % CHARACTER_SHEETS}`;
+                    let sprite: Phaser.GameObjects.Sprite | Phaser.GameObjects.Rectangle;
                     if (this.textures.exists(charKey)) {
                         sprite = this.add.sprite(0, -8, charKey, 0);
+                        const tint = SPRITE_TINTS[Math.floor(spriteIndex / CHARACTER_SHEETS) % SPRITE_TINTS.length];
+                        if (tint !== 0xffffff) sprite.setTint(tint);
                     } else {
                         sprite = this.add.rectangle(0, -8, 16, 32, 0x3a86ff);
                     }
 
                     // Thought bubble (word-wrapped)
-                    const thoughtBubble = this.add.text(0, -36, '', {
+                    const thoughtBubble = this.add.text(0, -26, '', {
+                        fontFamily: LABEL_FONT,
                         fontSize: '9px',
-                        color: '#e0e0e0',
-                        backgroundColor: '#1a1a3eee',
-                        padding: { x: 5, y: 4 },
+                        color: '#ffffff',
+                        backgroundColor: '#14163af2',
+                        padding: { x: 5, y: 3 },
                         align: 'center',
-                        wordWrap: { width: 130, useAdvancedWrap: true }
+                        wordWrap: { width: 110, useAdvancedWrap: true }
                     }).setOrigin(0.5, 1);
                     thoughtBubble.setVisible(false);
 
@@ -573,40 +546,48 @@ export class OfficeScene extends Phaser.Scene {
                     emoteBubble.setVisible(false);
 
                     // Name label
-                    const label = this.add.text(0, 16, agent.name, {
-                        fontSize: '10px', color: '#ffffff',
-                        backgroundColor: '#00000088', padding: { x: 2, y: 1 }
+                    const label = this.add.text(0, 9, agent.name, {
+                        fontFamily: LABEL_FONT,
+                        fontSize: '8px', fontStyle: 'bold', color: '#ffffff',
+                        backgroundColor: '#0b0c1ee6', padding: { x: 3, y: 1 }
                     }).setOrigin(0.5, 0);
 
                     // Focus highlight ring (hidden by default)
                     const focusRing = this.add.graphics();
-                    focusRing.lineStyle(1, 0x6c5ce7, 0.8);
-                    focusRing.strokeCircle(0, 0, 14);
+                    focusRing.lineStyle(1.5, 0xa29bfe, 1);
+                    focusRing.strokeCircle(0, -6, 13);
                     focusRing.setVisible(false);
 
                     container.add([focusRing, sprite, thoughtBubble, emoteBubble, label]);
-                    container.setSize(32, 48);
-                    container.setInteractive();
+                    container.setSize(20, 34);
+                    container.setInteractive(new Phaser.Geom.Rectangle(-10, -24, 20, 34), Phaser.Geom.Rectangle.Contains);
                     this.agentSprites.set(sessionId, container);
+                    if (getSnapshot().focusedId === sessionId) {
+                        focusRing.setVisible(true);
+                        this.followTarget = container;
+                    }
 
-                    // --- FOCUS MODE: Click to follow ---
+                    // --- FOCUS MODE: click to follow, click again to release ---
                     container.on('pointerdown', () => {
-                        if (this.followTarget === container) {
-                            // Unfollow on second click
-                            this.followTarget = null;
-                            focusRing.setVisible(false);
-                            eventBus.dispatchEvent(new CustomEvent('agent-focus', { detail: null }));
-                        } else {
-                            // Unfollow previous
-                            if (this.followTarget) {
-                                const prevRing = this.followTarget.getAt(0) as Phaser.GameObjects.Graphics;
-                                prevRing?.setVisible(false);
-                            }
-                            this.followTarget = container;
-                            focusRing.setVisible(true);
-                            eventBus.dispatchEvent(new CustomEvent('agent-focus', { detail: { name: agent.name, id: sessionId } }));
-                        }
+                        if (this.layoutEditMode) return;
+                        officeStore.setFocused(getSnapshot().focusedId === sessionId ? null : sessionId);
                     });
+
+                    const publish = () => officeStore.upsertAgent({
+                        id: sessionId,
+                        name: agent.name,
+                        role: agent.role || '',
+                        action: agent.action,
+                        currentTask: agent.currentTask || '',
+                        thought: agent.thought || '',
+                        mood: Number(agent.mood || 0),
+                        reputation: Number(agent.reputation || 0),
+                        riskLevel: Number(agent.riskLevel || 0),
+                        momentum: Number(agent.momentum || 0),
+                        sprite: spriteIndex
+                    });
+                    publish();
+                    let lastThought = agent.thought || '';
 
                     let prevX = agent.x;
                     let prevY = agent.y;
@@ -648,37 +629,33 @@ export class OfficeScene extends Phaser.Scene {
                             this.time.delayedCall(3000, () => emoteBubble.setVisible(false));
                         }
 
-                        // Thought bubble
-                        if (agent.thought && agent.thought !== '') {
-                            thoughtBubble.setText(agent.thought);
+                        // Thought bubble: only when the thought changes, and drawn above other agents
+                        // so neighbouring bubbles do not hide each other.
+                        const thought = agent.thought || '';
+                        if (thought && thought !== lastThought) {
+                            thoughtBubble.setText(thought);
                             thoughtBubble.setVisible(true);
-                            this.time.delayedCall(6000, () => thoughtBubble.setVisible(false));
+                            container.setDepth(++this.bubbleDepth);
+                            this.time.delayedCall(6000, () => {
+                                if (thoughtBubble.text === thought) thoughtBubble.setVisible(false);
+                            });
                         }
 
                         // --- SYSTEM LOG EVENT ---
-                        if (agent.action !== lastAction || agent.thought !== '') {
+                        if (agent.action !== lastAction || thought !== lastThought) {
                             eventBus.dispatchEvent(new CustomEvent('activity-log', {
                                 detail: {
                                     agent: agent.name,
                                     action: agent.action,
-                                    thought: agent.thought,
+                                    thought,
                                     time: new Date().toLocaleTimeString()
                                 }
                             }));
                         }
-                        eventBus.dispatchEvent(new CustomEvent('agent-telemetry', {
-                            detail: {
-                                id: sessionId,
-                                name: agent.name,
-                                mood: Number(agent.mood || 0),
-                                reputation: Number(agent.reputation || 0),
-                                riskLevel: Number(agent.riskLevel || 0),
-                                momentum: Number(agent.momentum || 0),
-                                action: agent.action
-                            }
-                        }));
+                        publish();
 
                         lastAction = agent.action;
+                        lastThought = thought;
                         prevX = agent.x;
                         prevY = agent.y;
                     });
@@ -687,23 +664,85 @@ export class OfficeScene extends Phaser.Scene {
                 state.agents.onRemove((agent: AgentState, sessionId: string) => {
                     const sprite = this.agentSprites.get(sessionId);
                     if (sprite) {
+                        if (this.followTarget === sprite) this.followTarget = null;
                         sprite.destroy();
                         this.agentSprites.delete(sessionId);
                     }
+                    officeStore.removeAgent(sessionId);
                 });
             });
 
         } catch (e) {
             console.error(e);
-            const wsEndpoint = resolveWsEndpoint();
-            this.statusText.setText(`Colyseus Sync: Failed (${wsEndpoint})`).setColor('#ffaaaa');
+            officeStore.setConnection('error', wsEndpoint);
         }
+    }
+
+    private setFocusRing(agentId: string | null, visible: boolean) {
+        if (!agentId) return;
+        const ring = this.agentSprites.get(agentId)?.getAt(0) as Phaser.GameObjects.Graphics | undefined;
+        ring?.setVisible(visible);
+    }
+
+    /** Draws a desk with the chair at seat tile (seatX, seatY), where the agent sits. */
+    private drawWorkstation(agentId: string, seatX: number, seatY: number, label: string) {
+        const g = this.deskGraphics;
+        if (!g || this.deskLabels.has(agentId) || !seatX || !seatY) return;
+        const x = seatX * 16 - 22;
+        const y = seatY * 16 - 38;
+
+        // Desk surface
+        g.fillStyle(0x5a3e28, 1);
+        g.fillRect(x, y, 56, 28);
+        g.fillStyle(0x6d4c2e, 1);
+        g.fillRect(x + 2, y + 2, 52, 24);
+
+        // Monitor
+        g.fillStyle(0x2d3436, 1);
+        g.fillRect(x + 6, y + 3, 22, 14); // bezel
+        g.fillStyle(0x74b9ff, 1);
+        g.fillRect(x + 8, y + 5, 18, 10); // screen glow
+        g.fillStyle(0x636e72, 1);
+        g.fillRect(x + 14, y + 17, 10, 3); // stand
+        g.fillRect(x + 10, y + 20, 18, 2); // base
+
+        // Keyboard and mouse
+        g.fillStyle(0xb2bec3, 1);
+        g.fillRect(x + 6, y + 22, 18, 4);
+        g.fillRect(x + 28, y + 22, 5, 4);
+
+        // Notepad
+        g.fillStyle(0xffeaa7, 1);
+        g.fillRect(x + 36, y + 6, 12, 16);
+        g.lineStyle(1, 0xfdcb6e, 0.8);
+        g.beginPath();
+        g.moveTo(x + 38, y + 10); g.lineTo(x + 46, y + 10);
+        g.moveTo(x + 38, y + 14); g.lineTo(x + 46, y + 14);
+        g.moveTo(x + 38, y + 18); g.lineTo(x + 44, y + 18);
+        g.strokePath();
+
+        // Coffee mug
+        g.fillStyle(0xd63031, 1);
+        g.fillCircle(x + 37, y + 24, 3);
+        g.fillStyle(0x2d3436, 1);
+        g.fillCircle(x + 37, y + 24, 1.5);
+
+        // Office chair (below desk)
+        g.fillStyle(0x2d3436, 1);
+        g.fillCircle(x + 22, y + 38, 8);
+        g.fillStyle(0x6c5ce7, 1);
+        g.fillCircle(x + 22, y + 38, 6);
+
+        const text = this.add.text(x + 28, y - 5, label, { fontFamily: LABEL_FONT, fontSize: '7px', color: '#b8bce0' }).setOrigin(0.5);
+        text.setDepth(2);
+        this.deskLabels.set(agentId, text);
     }
 
     update() {
         if (this.cinematicReleaseAt > 0 && Date.now() > this.cinematicReleaseAt) {
             this.cinematicReleaseAt = 0;
-            this.followTarget = null;
+            const focusedId = getSnapshot().focusedId;
+            this.followTarget = focusedId ? this.agentSprites.get(focusedId) || null : null;
         }
         const speed = 5;
         const manualPan =
@@ -716,24 +755,30 @@ export class OfficeScene extends Phaser.Scene {
             // User input should always win over cinematic follow.
             this.followTarget = null;
             this.cinematicReleaseAt = 0;
+            officeStore.setFocused(null);
             if (this.cursors?.left.isDown || this.heldMoveKeys.has('left')) this.cameras.main.scrollX -= speed;
             if (this.cursors?.right.isDown || this.heldMoveKeys.has('right')) this.cameras.main.scrollX += speed;
             if (this.cursors?.up.isDown || this.heldMoveKeys.has('up')) this.cameras.main.scrollY -= speed;
             if (this.cursors?.down.isDown || this.heldMoveKeys.has('down')) this.cameras.main.scrollY += speed;
         }
-        // If following an agent, smoothly track them
+        // Phaser zooms around the camera centre, so the visible world centre is scroll + size / 2.
+        const cam = this.cameras.main;
         if (this.followTarget && !manualPan) {
-            const cam = this.cameras.main;
-            const targetX = this.followTarget.x - cam.width / (2 * cam.zoom);
-            const targetY = this.followTarget.y - cam.height / (2 * cam.zoom);
+            const targetX = this.followTarget.x - cam.width / 2;
+            const targetY = this.followTarget.y - cam.height / 2;
             cam.scrollX += (targetX - cam.scrollX) * 0.08;
             cam.scrollY += (targetY - cam.scrollY) * 0.08;
         }
-        const cam = this.cameras.main;
-        const maxScrollX = Math.max(0, this.gridSize - cam.width / cam.zoom);
-        const maxScrollY = Math.max(0, this.gridSize - cam.height / cam.zoom);
-        cam.scrollX = Phaser.Math.Clamp(cam.scrollX, 0, maxScrollX);
-        cam.scrollY = Phaser.Math.Clamp(cam.scrollY, 0, maxScrollY);
+        cam.scrollX = this.clampScroll(cam.scrollX, cam.width, cam.zoom);
+        cam.scrollY = this.clampScroll(cam.scrollY, cam.height, cam.zoom);
+    }
+
+    /** Keeps the office on screen; when it is smaller than the viewport it stays centred. */
+    private clampScroll(scroll: number, viewSize: number, zoom: number): number {
+        const visible = viewSize / zoom;
+        const offset = (viewSize - visible) / 2;
+        if (visible >= this.gridSize) return this.gridSize / 2 - viewSize / 2;
+        return Phaser.Math.Clamp(scroll, -offset, this.gridSize - visible - offset);
     }
 
     private focusAgentTemporarily(agentId: string) {
@@ -826,8 +871,8 @@ export function setupPhaser(parentId: string) {
     const config: Phaser.Types.Core.GameConfig = {
         type: Phaser.AUTO,
         parent: parentId,
-        width: window.innerWidth,
-        height: window.innerHeight,
+        width: document.getElementById(parentId)?.clientWidth || window.innerWidth,
+        height: document.getElementById(parentId)?.clientHeight || window.innerHeight,
         scene: [OfficeScene],
         pixelArt: true,
         scale: {

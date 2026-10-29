@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { eventBus } from '../events';
-import { FloatingPanel } from './FloatingPanel';
+import { Panel } from './Panel';
 
 interface HighlightItem {
     id: number;
@@ -23,7 +23,7 @@ export function HighlightsFeed() {
                     type: detail.type || 'event',
                     title: detail.title || 'Office Moment',
                     body: detail.body || '',
-                    time: new Date().toLocaleTimeString()
+                    time: (detail.time ? new Date(detail.time) : new Date()).toLocaleTimeString()
                 }, ...prev];
                 return next.slice(0, 8);
             });
@@ -34,14 +34,10 @@ export function HighlightsFeed() {
     }, []);
 
     return (
-        <FloatingPanel
+        <Panel
             id="highlight-feed"
             title="Highlight Timeline"
             subtitle="Live dramatic moments"
-            width={320}
-            defaultDock="right"
-            defaultY={430}
-            zIndex={15}
         >
             {items.length === 0 && (
                 <div style={{ fontSize: 11, color: '#8ca4d6' }}>Waiting for dramatic moments...</div>
@@ -59,6 +55,6 @@ export function HighlightsFeed() {
                     <div style={{ fontSize: 11, color: '#d4def2', marginTop: 2 }}>{item.body}</div>
                 </div>
             ))}
-        </FloatingPanel>
+        </Panel>
     );
 }
