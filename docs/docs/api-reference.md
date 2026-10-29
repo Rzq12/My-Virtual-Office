@@ -83,7 +83,7 @@ CREATE TABLE memories (
     type TEXT NOT NULL,        -- thought|conversation|task_result|observation|achievement
     timestamp TEXT NOT NULL,
     importance REAL DEFAULT 0.5,
-    embedding TEXT,            -- JSON array of floats (Ollama)
+    embedding TEXT,            -- JSON array of floats (OpenAI-compatible embeddings, optional)
     session_id TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 );

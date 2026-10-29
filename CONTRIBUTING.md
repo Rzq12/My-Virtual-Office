@@ -39,7 +39,7 @@ Open **http://localhost:5173** to see the office.
 ```
 packages/
 ├── core/       # Agent brain, Office grid, Memory, Tasks (no I/O)
-├── adapters/   # LLM adapters (Ollama, OpenAI-compatible)
+├── adapters/   # LLM adapters (Claude/Codex CLI, OpenAI-compatible)
 ├── server/     # Colyseus room, ToolExecutor, MemoryStore (SQLite)
 ├── ui/         # Phaser.js game + React overlay components
 └── cli/        # Scaffolding commands
@@ -62,7 +62,7 @@ npm run build --workspace=@agent-office/server
 Open an issue with:
 - What you expected vs. what happened
 - Steps to reproduce
-- Your environment (OS, Node version, Ollama model)
+- Your environment (OS, Node version, LLM provider and model)
 
 ### Feature Requests
 

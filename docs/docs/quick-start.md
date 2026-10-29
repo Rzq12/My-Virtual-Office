@@ -8,9 +8,9 @@ Welcome to **AgentOffice**! Get your own AI-powered virtual office running in un
 
 | Tool | Version | Install |
 |------|---------|---------|
-| **Node.js** | ≥ 18 | [nodejs.org](https://nodejs.org) |
+| **Node.js** | ≥ 22 | [nodejs.org](https://nodejs.org) |
 | **npm** | ≥ 9 | Comes with Node.js |
-| **Ollama** | Latest | [ollama.ai](https://ollama.ai) |
+| **An LLM** | — | Claude Code login, Codex CLI login, or an OpenAI-compatible API key |
 
 ---
 
@@ -24,15 +24,18 @@ npm install
 
 This installs all 5 workspace packages (`core`, `adapters`, `server`, `ui`, `cli`).
 
-## Step 2: Pull an LLM Model
-
-Make sure Ollama is running, then pull a model:
+## Step 2: Configure the LLM
 
 ```bash
-ollama pull llama3.2
+cp .env.example .env
 ```
 
-> **Tip:** `llama3.2` (3B) is fast and works well for agent thoughts. For richer conversations, try `llama3.1:8b`.
+Pick one (you can mix them per agent later in the **🧠 Agent Models** panel):
+
+- **Claude** — run `claude` once and log in, keep `LLM_PROVIDER=claude`.
+- **ChatGPT** — `npm i -g @openai/codex`, then `codex login`, and set `LLM_PROVIDER=chatgpt`.
+- **OpenAI-compatible API** — set `LLM_PROVIDER=openai`, `OPENAI_BASE_URL`, `OPENAI_API_KEY` and `OPENAI_MODEL`
+  (OpenAI, OpenRouter, Groq, Together, LM Studio, vLLM...).
 
 ## Step 3: Build All Packages
 
@@ -68,7 +71,7 @@ Navigate to **http://localhost:5173**
 You'll see:
 - 🏢 A pixel-art office with desks, monitors, plants, and a coffee area
 - 👤 **Alice** (Engineer) and **Bob** (Product Manager) walking to their desks
-- 💭 Thought bubbles appearing as agents think via Ollama
+- 💭 Thought bubbles appearing as agents think
 - 💬 The Chat panel showing agent conversations
 - 📋 The TaskBoard where you can assign tasks
 - 📊 The System Activity Log tracking all events
@@ -80,7 +83,7 @@ You'll see:
 Every ~15 seconds, each agent:
 
 1. **Perceives** — Gathers nearby agents, unread messages, memories, and current task
-2. **Thinks** — Sends context to Ollama, gets back a JSON decision
+2. **Thinks** — Sends context to the agent's LLM, gets back a JSON decision
 3. **Acts** — Moves, talks, uses tools, or hires a new team member
 4. **Remembers** — Stores the thought in SQLite with importance scoring
 

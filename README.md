@@ -1,10 +1,10 @@
 # 🏢 AgentOffice
 
-**Self-growing AI teams in a pixel-art virtual office — powered by local LLMs.**
+**Self-growing AI teams in a pixel-art virtual office — powered by the LLM of your choice.**
 
 Watch AI agents walk to desks, think, collaborate, hire interns, assign tasks to each other, execute code, search the web, and grow their team — all rendered in real-time pixel art with persistent memory across sessions.
 
-> **Zero lock-in.** Runs 100% locally with Ollama. Swap for any OpenAI-compatible API.
+> **Zero lock-in.** Use your Claude Code or Codex CLI login, or any OpenAI-compatible API — and pick the model per agent.
 
 
 
@@ -28,14 +28,14 @@ https://github.com/user-attachments/assets/da76e31d-ff34-4ce1-9092-5bf9e6ee2058
 
 | Feature | Description |
 |---------|-------------|
-| 🧠 **LLM-Powered Agents** | Each agent has their own Ollama-powered brain with personality traits |
+| 🧠 **LLM-Powered Agents** | Each agent has its own brain (Claude, ChatGPT or any OpenAI-compatible model), chosen per agent in the UI |
 | 💬 **Agent-to-Agent Conversations** | Agents talk to each other autonomously and respond to messages |
 | 🎯 **Click-to-Follow Focus Mode** | Click any agent sprite to have the camera smoothly track them |
 | 📋 **UI Task Assignment** | Assign tasks from the TaskBoard — or agents create tasks for each other |
 | 🤝 **Dynamic Hiring** | Agents can hire new team members (interns, devs, designers) on their own |
 | 🔧 **Tool Execution** | Sandboxed JS execution, web search, note-taking, file reading |
 | 💾 **Persistent Memory** | SQLite-backed memories survive server restarts with importance-weighted recall |
-| 🔍 **Semantic Memory Search** | Ollama embeddings + cosine similarity for intelligent memory retrieval |
+| 🔍 **Semantic Memory Search** | Optional OpenAI-compatible embeddings + cosine similarity for memory retrieval |
 | 🏗️ **Layout Editor** | Drag-and-drop furniture placement, saved to database |
 | 📊 **System Activity Log** | Real-time feed of all agent events with deduplication |
 | 💡 **Emote Bubbles** | Action-specific emoji (💻💬😌🔧🚶💡) above agent sprites |
@@ -47,11 +47,11 @@ https://github.com/user-attachments/assets/da76e31d-ff34-4ce1-9092-5bf9e6ee2058
 
 ```
 You open the browser → pixel-art office loads → a 10-person software team spawns at their desks
-  → Each agent runs a think loop every ~15s via Ollama
+  → Each agent runs a think loop via its own LLM (Claude CLI, Codex CLI or an OpenAI-compatible API)
   → LLM returns: { thought, action, target, toolCall }
   → Server executes the action (move, talk, use_tool, hire_agent)
   → Colyseus syncs state to all connected browsers in real-time
-  → Agents remember everything via SQLite + Ollama embeddings
+  → Agents remember everything via SQLite (+ optional embeddings)
   → Teams grow as agents decide to hire new members 🚀
 ```
 
@@ -63,22 +63,22 @@ You open the browser → pixel-art office loads → a 10-person software team sp
 agent-office/
 ├── packages/
 │   ├── core/          # Agent state machine, Memory, Tasks, Office grid
-│   ├── adapters/      # OllamaAdapter, OpenAICompatibleAdapter, PromptBuilder
+│   ├── adapters/      # Claude/Codex CLI adapters, OpenAICompatibleAdapter, PromptBuilder
 │   ├── server/        # Colyseus rooms, ToolExecutor, MemoryStore (SQLite)
 │   ├── ui/            # Phaser.js game + React overlay (Chat, TaskBoard, SystemLog)
 │   └── cli/           # Scaffold & management commands
 ├── examples/
-│   └── ollama-startup/  # Demo office with 2 agents
+│   └── openai-compatible-startup/  # Demo office with 2 agents
 ├── docs/              # Documentation (Docusaurus)
 └── docker-compose.yml # One-command deployment
 ```
 
 **Data Flow:**
 ```
-Ollama ←→ OllamaAdapter ←→ Agent.think() ←→ Colyseus State ←→ Phaser + React UI
+LLM ←→ Adapter ←→ Agent.think() ←→ Colyseus State ←→ Phaser + React UI
                                   ↕                  ↕
                            MemoryStore (SQLite)   ToolExecutor
-                           Embeddings (Ollama)    (code, search, tasks)
+                           Embeddings (optional)  (code, search, tasks)
 ```
 
 ---
@@ -89,9 +89,9 @@ Ollama ←→ OllamaAdapter ←→ Agent.think() ←→ Colyseus State ←→ Ph
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| **Node.js** | ≥ 18 | Runtime |
+| **Node.js** | ≥ 22 | Runtime (the code sandbox uses Node's permission model) |
 | **npm** | ≥ 9 | Package manager (workspaces) |
-| **Ollama** | Latest | Local LLM inference |
+| **An LLM** | — | [Claude Code](https://claude.com/claude-code) login, [Codex CLI](https://github.com/openai/codex) login, or an OpenAI-compatible API key |
 
 ### Setup
 
@@ -101,8 +101,8 @@ git clone https://github.com/AjStraworern/agent-office.git
 cd agent-office
 npm install
 
-# Pull the model
-ollama pull llama3.2
+# Configure the LLM (see .env.example)
+cp .env.example .env
 
 # Build all packages
 npm run build
@@ -145,37 +145,26 @@ results land in `packages/server/workspace/notes/<agent>.md`. Every agent though
 docker compose up --build
 ```
 
-This starts the **server** (port 3000), **UI** (port 80), **Ollama** (with GPU), and **Redis** (for scaling).
-
-> For CPU-only, remove the `deploy.resources` section from `docker-compose.yml`.
+This starts the **server** (port 3000), **UI** (port 80) and **Redis** (for scaling).
+Inside Docker the agents use an OpenAI-compatible API, so export `OPENAI_BASE_URL`, `OPENAI_API_KEY` and `OPENAI_MODEL` first.
 
 ---
 
 ## 🔧 Configuration
 
-### Change the LLM Model
+### Choose the LLM for each agent
 
-Edit `packages/server/src/rooms/OfficeRoom.ts`:
+Open the **🧠 Agent Models** panel in the left sidebar. Every agent has a provider and a model; change one agent
+or use *Set every agent to* for the whole team. Choices are saved in SQLite and survive restarts.
 
-```typescript
-inference: {
-    provider: 'ollama',
-    model: 'llama3.2:latest',  // ← Change to any Ollama model
-    systemPrompt: '...',
-},
-```
+| Provider | Setup |
+|----------|-------|
+| **Claude** | Log in once with `claude`; models `haiku`, `sonnet`, `opus` |
+| **ChatGPT** | `npm i -g @openai/codex` and `codex login` |
+| **OpenAI-compatible** | Set `OPENAI_BASE_URL`, `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`) in `.env` — works with OpenAI, OpenRouter, Groq, Together, LM Studio, vLLM… The model list is read from the endpoint's `/models`. |
 
-### Use OpenAI / Gaia / OpenRouter
-
-```typescript
-import { OpenAICompatibleAdapter } from '@agent-office/adapters';
-
-private adapter = new OpenAICompatibleAdapter(
-    'https://api.openai.com/v1',
-    'sk-your-key-here',
-    'gpt-4o-mini'
-);
-```
+`LLM_PROVIDER` in `.env` (`claude`, `chatgpt`, `openai` or `mixed`) is only the default for agents you have not configured.
+API keys never leave the server; the UI only sends provider and model names.
 
 ### Add Agents Manually
 
@@ -242,7 +231,7 @@ Modify `furnitureTargets` in `OfficeRoom.ts` or use the in-browser Layout Editor
 | Package | Description |
 |---------|-------------|
 | `@agent-office/core` | Agent lifecycle (Perceive → Think → Act), Office grid, Task system, Memory with importance scoring |
-| `@agent-office/adapters` | InferenceAdapter interface, OllamaAdapter, OpenAICompatibleAdapter, PromptBuilder |
+| `@agent-office/adapters` | InferenceAdapter interface, Claude/Codex CLI adapters, OpenAICompatibleAdapter, PromptBuilder |
 | `@agent-office/server` | Colyseus room, game loop, ToolExecutor (code/search/notes), MemoryStore (SQLite + embeddings) |
 | `@agent-office/ui` | Phaser.js renderer, React overlay (Chat, TaskBoard, Inspector, SystemLog, LayoutEditor) |
 | `@agent-office/cli` | `create-agent-office` scaffold, `add-agent` commands |
@@ -296,7 +285,7 @@ See release notes in [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
-**Built with** Phaser.js · Colyseus · React · Ollama · SQLite · TypeScript
+**Built with** Phaser.js · Colyseus · React · SQLite · TypeScript
 
 **Star ⭐ this repo** if you think AI agents deserve their own office!
 

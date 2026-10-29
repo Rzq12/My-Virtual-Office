@@ -7,6 +7,7 @@ import { officeStore, tasksFromRows, subscribe, getSnapshot } from '../store';
 let activeRoom: Colyseus.Room<OfficeState> | undefined;
 
 const CHARACTER_SHEETS = 6;
+const RECONNECT_DELAY_MS = 3000;
 // Tints for agents beyond the six base sprites so every teammate looks distinct.
 const SPRITE_TINTS = [0xffffff, 0xffc9c9, 0xc9e4ff, 0xd4ffc9, 0xfff1c9, 0xe9c9ff];
 const LABEL_FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
@@ -462,6 +463,24 @@ export class OfficeScene extends Phaser.Scene {
         }
     }
 
+    /** Drops the previous room's sprites and desks so a reconnect starts from a clean scene. */
+    private resetAgents() {
+        this.agentSprites.forEach(sprite => sprite.destroy());
+        this.agentSprites.clear();
+        this.deskLabels.forEach(label => label.destroy());
+        this.deskLabels.clear();
+        this.deskGraphics?.clear();
+        this.followTarget = null;
+        getSnapshot().agents.forEach(agent => officeStore.removeAgent(agent.id));
+    }
+
+    /** Retries after a delay; the server is often restarted while the page stays open. */
+    private scheduleReconnect(wsEndpoint: string) {
+        officeStore.setConnection('error', wsEndpoint);
+        activeRoom = undefined;
+        this.time.delayedCall(RECONNECT_DELAY_MS, () => this.connectToServer());
+    }
+
     async connectToServer() {
         const wsEndpoint = resolveWsEndpoint();
         try {
@@ -469,14 +488,17 @@ export class OfficeScene extends Phaser.Scene {
             const client = new Colyseus.Client(wsEndpoint);
             this.room = await client.joinOrCreate('office');
             const room = this.room;
+            this.resetAgents();
             activeRoom = room as Colyseus.Room<OfficeState>;
             officeStore.setConnection('connected', wsEndpoint);
-            room.onLeave(() => officeStore.setConnection('error', wsEndpoint));
+            room.onLeave(() => this.scheduleReconnect(wsEndpoint));
             room.onError(() => officeStore.setConnection('error', wsEndpoint));
 
             // Register every message handler right after joining: the server sends history,
             // tasks and layout from onJoin, and anything without a handler is dropped.
             room.onMessage('chat', (message: any) => officeStore.addChat(message));
+            room.onMessage('llm-options', (options: any) => officeStore.setProviders(Array.isArray(options?.providers) ? options.providers : []));
+            room.onMessage('model-error', (message: any) => officeStore.addChat({ sender: 'System', text: `⚠️ ${message?.error || 'Could not change the model.'}` }));
             room.onMessage('chat-history', (messages: any) => officeStore.setChat(Array.isArray(messages) ? messages : []));
             room.onMessage('tasks-sync', (rows: any) => officeStore.setTasks(tasksFromRows(rows)));
             room.onMessage('task-update', (task: any) => officeStore.upsertTask({
@@ -584,7 +606,9 @@ export class OfficeScene extends Phaser.Scene {
                         reputation: Number(agent.reputation || 0),
                         riskLevel: Number(agent.riskLevel || 0),
                         momentum: Number(agent.momentum || 0),
-                        sprite: spriteIndex
+                        sprite: spriteIndex,
+                        provider: agent.provider || '',
+                        model: agent.model || ''
                     });
                     publish();
                     let lastThought = agent.thought || '';
@@ -673,8 +697,8 @@ export class OfficeScene extends Phaser.Scene {
             });
 
         } catch (e) {
-            console.error(e);
-            officeStore.setConnection('error', wsEndpoint);
+            console.warn(`Cannot reach ${wsEndpoint}; retrying in ${RECONNECT_DELAY_MS / 1000}s`, e);
+            this.scheduleReconnect(wsEndpoint);
         }
     }
 

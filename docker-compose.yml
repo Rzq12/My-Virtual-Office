@@ -11,6 +11,11 @@ services:
       - DATABASE_URL=sqlite:/data/office.db
       - REDIS_URL=redis://redis:6379
       - HOST=0.0.0.0
+      # Agents use an OpenAI-compatible API inside Docker (the Claude/Codex CLIs are not installed in the image)
+      - LLM_PROVIDER=openai
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
     volumes:
       - ./data:/data
   
@@ -26,18 +31,3 @@ services:
   
   redis:
     image: redis:alpine
-  
-  ollama:
-    image: ollama/ollama
-    volumes:
-      - ollama:/root/.ollama
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
-volumes:
-  ollama:

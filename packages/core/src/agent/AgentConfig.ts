@@ -5,7 +5,7 @@ export interface ToolDefinition {
 }
 
 export interface InferenceConfig {
-    provider: 'ollama' | 'openai' | 'gaia' | 'anthropic' | 'custom';
+    provider: 'openai' | 'gaia' | 'anthropic' | 'custom';
     model: string;
     baseUrl?: string;
     apiKey?: string;

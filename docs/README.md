@@ -17,5 +17,5 @@ Welcome to the AgentOffice docs. Start here to learn how to set up, customize, a
 
 | Example | Description |
 |---------|-------------|
-| [ollama-startup](../examples/ollama-startup/) | 2-agent startup office using local Ollama (llama3.2) |
+| [openai-compatible-startup](../examples/openai-compatible-startup/) | 2-agent startup office using any OpenAI-compatible API |
 | [openai-agency](../examples/openai-agency/) | 3-agent creative agency using OpenAI GPT-4o-mini |

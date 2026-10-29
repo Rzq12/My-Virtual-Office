@@ -1,5 +1,5 @@
 {
-    "name": "ollama-startup",
+    "name": "openai-compatible-startup",
     "version": "1.0.0",
     "private": true,
     "scripts": {

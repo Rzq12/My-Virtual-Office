@@ -152,6 +152,25 @@ export function resolveMentions(text: string, agents: Array<{ id: string; name: 
     return hits.map(a => a.id);
 }
 
+/** Most open tasks an agent may give a teammate; tasks from the user are always accepted. */
+export const MAX_OPEN_TASKS_PER_AGENT = 4;
+
+const STOPWORDS = new Set(['the', 'and', 'for', 'with', 'from', 'into', 'per', 'via', 'once', 'that', 'this', 'are', 'can', 'dengan', 'untuk', 'yang', 'dan', 'dari', 'agar', 'pada']);
+
+function titleWords(title: string): Set<string> {
+    return new Set(title.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length > 2 && !STOPWORDS.has(w)));
+}
+
+/** True when two task titles share most of their words (agents tend to re-file the same request). */
+export function isSimilarTitle(a: string, b: string, threshold = 0.5): boolean {
+    const wa = titleWords(a);
+    const wb = titleWords(b);
+    if (wa.size === 0 || wb.size === 0) return a.trim().toLowerCase() === b.trim().toLowerCase();
+    let shared = 0;
+    wa.forEach(w => { if (wb.has(w)) shared++; });
+    return shared / Math.min(wa.size, wb.size) >= threshold && shared / Math.max(wa.size, wb.size) >= threshold * 0.6;
+}
+
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

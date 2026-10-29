@@ -38,9 +38,9 @@ AgentOffice is built as a TypeScript monorepo with 5 packages. This document exp
 └─────────────┼─────────────────────────────────────────────────┘
               │ HTTP API
 ┌─────────────▼─────────────────────────────────────────────────┐
-│                       OLLAMA                                   │
-│   Chat Completions (/api/chat)                                │
-│   Embeddings (/api/embeddings)                                │
+│     LLM (per agent): Claude CLI · Codex CLI · OpenAI-compatible │
+│   Chat Completions (/v1/chat/completions or CLI)               │
+│   Embeddings (/v1/embeddings, optional)                        │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -65,7 +65,7 @@ The brain of the system. Contains:
 
 Bridges between the core and specific LLM providers:
 
-- **`OllamaAdapter`** — Calls Ollama's `/api/chat` endpoint
+- **`ClaudeCliAdapter` / `CodexCliAdapter`** — Run inference through the logged-in `claude` / `codex` CLIs
 - **`OpenAICompatibleAdapter`** — Works with OpenAI, Gaia, OpenRouter, or any provider using the `/v1/chat/completions` format
 - **`PromptBuilder`** — Constructs structured prompts from agent config and perception context
 
@@ -112,7 +112,7 @@ Every ~15 seconds per agent:
 
 ┌─────────┐     ┌──────────┐     ┌─────────┐     ┌──────────┐
 │ PERCEIVE│────▶│  THINK   │────▶│   ACT   │────▶│ REMEMBER │
-│         │     │ (Ollama) │     │         │     │          │
+│         │     │  (LLM)   │     │         │     │          │
 │ context │     │ returns  │     │ execute │     │ store in │
 │ nearby  │     │ JSON     │     │ action  │     │ memory   │
 │ messages│     │ decision │     │         │     │          │
@@ -150,7 +150,7 @@ Short-Term Memory (in-process)
 
 Long-Term Memory (SQLite)
 ├── All memories persisted with agent_id, type, timestamp
-├── Important memories (≥ 0.5) get Ollama embeddings
+├── Important memories (≥ 0.5) get embeddings when OPENAI_EMBEDDING_MODEL is set
 ├── Semantic search via cosine similarity
 └── Survives server restarts
 ```

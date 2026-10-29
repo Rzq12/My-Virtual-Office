@@ -9,7 +9,7 @@ describe('PromptBuilder', () => {
             role: 'Engineer',
             avatar: 'alice.png',
             inference: {
-                provider: 'ollama',
+                provider: 'openai',
                 model: 'llama3.2:latest',
                 systemPrompt: '',
                 tools: []

@@ -11,13 +11,13 @@ function cosineSimilarity(a: number[], b: number[]): number {
     return dot / (Math.sqrt(magA) * Math.sqrt(magB) || 1);
 }
 
+export type Embedder = (text: string) => Promise<number[] | null>;
+
 export class MemoryStore {
     private db?: Database;
-    private ollamaUrl: string;
 
-    constructor(ollamaUrl: string = 'http://localhost:11434') {
-        this.ollamaUrl = ollamaUrl;
-    }
+    /** Without an embedder, memories are stored without vectors and semantic search returns nothing. */
+    constructor(private embedder?: Embedder) { }
 
     async initialize(dbPath: string = './data/office-memory.db') {
         // Ensure data directory exists
@@ -54,6 +54,13 @@ export class MemoryStore {
                 completed_at TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS agent_settings (
+                agent_id TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL DEFAULT '',
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+
             CREATE TABLE IF NOT EXISTS office_layout (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 layout_json TEXT NOT NULL,
@@ -75,14 +82,9 @@ export class MemoryStore {
     // --- Embedding Generation ---
 
     private async generateEmbedding(text: string): Promise<number[] | null> {
+        if (!this.embedder) return null;
         try {
-            const res = await fetch(`${this.ollamaUrl}/api/embeddings`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: 'llama3.2:latest', prompt: text })
-            });
-            const data = await res.json();
-            return data.embedding || null;
+            return await this.embedder(text);
         } catch {
             return null;
         }
@@ -183,6 +185,23 @@ export class MemoryStore {
     async completeTask(taskId: number): Promise<void> {
         if (!this.db) return;
         await this.db.run("UPDATE tasks SET status = 'completed', completed_at = datetime('now') WHERE id = ?", [taskId]);
+    }
+
+    // --- Agent Settings (chosen LLM per agent) ---
+
+    async loadAgentModels(): Promise<Record<string, { provider: string; model: string }>> {
+        if (!this.db) return {};
+        const rows = await this.db.all('SELECT agent_id, provider, model FROM agent_settings');
+        return Object.fromEntries(rows.map((r: any) => [r.agent_id, { provider: r.provider, model: r.model }]));
+    }
+
+    async saveAgentModel(agentId: string, provider: string, model: string): Promise<void> {
+        if (!this.db) return;
+        await this.db.run(
+            `INSERT INTO agent_settings (agent_id, provider, model, updated_at) VALUES (?, ?, ?, datetime('now'))
+             ON CONFLICT(agent_id) DO UPDATE SET provider = excluded.provider, model = excluded.model, updated_at = excluded.updated_at`,
+            [agentId, provider, model]
+        );
     }
 
     // --- Layout Operations ---

@@ -15,8 +15,8 @@ const alice = new Agent({
     role: 'Engineer',
     avatar: 'sprite.png',
     inference: {
-        provider: 'ollama',
-        model: 'llama3.2:latest',
+        provider: 'openai',
+        model: 'gpt-4o-mini',
         systemPrompt: 'You are Alice, an engineer. Be technical and precise.',
     },
     personality: {

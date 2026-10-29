@@ -1,4 +1,19 @@
-import { ROSTER, DESK_SEATS, activeRoster, pickAssignee, resolveMentions } from '../agents';
+import { ROSTER, DESK_SEATS, activeRoster, pickAssignee, resolveMentions, isSimilarTitle } from '../agents';
+
+describe('isSimilarTitle', () => {
+    it('catches re-filed versions of the same request', () => {
+        expect(isSimilarTitle(
+            'Provide read access to latest feature dataset for ML evaluation baseline validation (see notes/citra.md, Task #31 requirements)',
+            'Provide feature dataset access for ML evaluation baseline validation (Task #31) per data requirements in notes/citra.md'
+        )).toBe(true);
+        expect(isSimilarTitle('Triage server outage in packages/server (infra/DevOps investigation)', 'Triage server outage in packages/server: find cause, restore service')).toBe(true);
+    });
+
+    it('keeps genuinely different tasks', () => {
+        expect(isSimilarTitle('Setup CI/CD pipeline dengan Docker untuk server', 'Audit CI/CD pipeline and container configs for reliability gaps')).toBe(false);
+        expect(isSimilarTitle('Write QA test plan for POST endpoint', 'Draft accessibility checklist for POST endpoint form')).toBe(false);
+    });
+});
 
 describe('roster', () => {
     it('includes the core engineering roles', () => {

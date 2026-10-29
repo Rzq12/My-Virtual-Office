@@ -17,6 +17,8 @@ export class AgentState extends Schema {
     declare deskX: number;
     declare deskY: number;
     declare sprite: number;
+    declare provider: string;
+    declare model: string;
 }
 
 type("string")(AgentState.prototype, "id");
@@ -35,6 +37,8 @@ type("string")(AgentState.prototype, "role");
 type("number")(AgentState.prototype, "deskX");
 type("number")(AgentState.prototype, "deskY");
 type("number")(AgentState.prototype, "sprite");
+type("string")(AgentState.prototype, "provider");
+type("string")(AgentState.prototype, "model");
 
 
 export class OfficeState extends Schema {

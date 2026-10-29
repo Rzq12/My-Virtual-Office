@@ -32,23 +32,12 @@ docker compose up --build
 |---------|------|-------------|
 | **server** | 3000 | Colyseus WebSocket + Express API |
 | **ui** | 80 | Nginx serving the Vite build |
-| **ollama** | 11434 | Local LLM inference |
 | **redis** | 6379 | Pub/sub for multi-instance scaling |
 
-### GPU Support
+### LLM inside Docker
 
-The Ollama container is configured for NVIDIA GPUs. For CPU-only:
-
-```yaml
-# docker-compose.yml — remove this block from the ollama service:
-deploy:
-  resources:
-    reservations:
-      devices:
-        - driver: nvidia
-          count: 1
-          capabilities: [gpu]
-```
+The image does not include the Claude or Codex CLIs, so agents use an OpenAI-compatible API.
+Export `OPENAI_BASE_URL`, `OPENAI_API_KEY` and `OPENAI_MODEL` before `docker compose up`.
 
 ### Persistent Data
 
@@ -69,7 +58,7 @@ volumes:
 2. Connect the repo to your cloud provider
 3. Set environment variables:
    - `DATABASE_URL=sqlite:/data/office.db`
-   - `OLLAMA_URL=http://your-ollama-instance:11434`
+   - `LLM_PROVIDER=openai`, `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`
 4. Deploy the server package
 5. Deploy the UI package separately (static site)
 
@@ -78,7 +67,11 @@ volumes:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `3000` | Server port |
-| `OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint |
+| `LLM_PROVIDER` | `mixed` | Default brain: `claude`, `chatgpt`, `openai` or `mixed` |
+| `OPENAI_BASE_URL` | (none) | OpenAI-compatible endpoint, e.g. `https://api.openai.com/v1` |
+| `OPENAI_API_KEY` | (none) | Key for that endpoint (stays on the server) |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Default model for the `openai` provider |
+| `HOST` | `127.0.0.1` | Bind address; the server has no authentication |
 | `DATABASE_URL` | `./data/office-memory.db` | SQLite database path |
 | `REDIS_URL` | (none) | Redis for multi-instance |
 
@@ -86,6 +79,6 @@ volumes:
 
 ## Production Considerations
 
-- **LLM Latency:** Each think cycle calls Ollama. With 7 agents and ~15s intervals, expect ~0.5 req/s. Scale Ollama or reduce agent count for slower hardware.
+- **LLM cost and latency:** Each think cycle is one LLM call. With 10 agents, `THINK_COOLDOWN_MS=30000` and `MAX_CONCURRENT_THINKS=3`, expect up to ~0.3 req/s. Lower the concurrency or set `ACTIVE_AGENTS` to spend less.
 - **Memory Growth:** SQLite database grows with agent memories. Use the `importance` threshold to control embedding generation.
 - **WebSocket Connections:** Colyseus handles 100+ spectators per room. For more, use Redis pub/sub with multiple server instances.

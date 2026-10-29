@@ -16,6 +16,18 @@ export interface AgentInfo {
     riskLevel: number;
     momentum: number;
     sprite: number;
+    provider: string;
+    model: string;
+}
+
+/** An LLM provider the server can use, with model suggestions (sent by the server as llm-options). */
+export interface ProviderOption {
+    id: string;
+    label: string;
+    available: boolean;
+    hint?: string;
+    defaultModel: string;
+    models: string[];
 }
 
 export type TaskStatus = 'pending' | 'in_progress' | 'completed';
@@ -44,6 +56,7 @@ export interface OfficeSnapshot {
     tasks: TaskInfo[];
     chat: ChatMessage[];
     focusedId: string | null;
+    providers: ProviderOption[];
 }
 
 const MAX_CHAT = 200;
@@ -55,7 +68,8 @@ let snapshot: OfficeSnapshot = {
     agents: [],
     tasks: [],
     chat: [],
-    focusedId: null
+    focusedId: null,
+    providers: []
 };
 
 const listeners = new Set<() => void>();
@@ -111,6 +125,9 @@ export const officeStore = {
     addChat(message: ChatMessage) {
         set({ chat: [...snapshot.chat, message].slice(-MAX_CHAT) });
     },
+    setProviders(providers: ProviderOption[]) {
+        set({ providers });
+    },
     setFocused(focusedId: string | null) {
         if (focusedId !== snapshot.focusedId) set({ focusedId });
     }
@@ -118,7 +135,7 @@ export const officeStore = {
 
 function sameAgent(a: AgentInfo, b: AgentInfo): boolean {
     return a.name === b.name && a.role === b.role && a.action === b.action && a.currentTask === b.currentTask &&
-        a.thought === b.thought && a.sprite === b.sprite &&
+        a.thought === b.thought && a.sprite === b.sprite && a.provider === b.provider && a.model === b.model &&
         Math.abs(a.mood - b.mood) < 0.005 && Math.abs(a.reputation - b.reputation) < 0.005 &&
         Math.abs(a.riskLevel - b.riskLevel) < 0.005 && Math.abs(a.momentum - b.momentum) < 0.005;
 }

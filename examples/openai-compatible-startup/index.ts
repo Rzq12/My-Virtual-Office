@@ -1,19 +1,17 @@
 /**
- * 🏢 AgentOffice — Ollama Startup Example
+ * 🏢 AgentOffice — OpenAI-compatible Startup Example
  *
- * A minimal virtual office with 2 AI agents powered by a local Ollama model.
- * This example shows how to configure agents, set up the office, and
- * connect everything to the Colyseus server.
+ * A minimal virtual office with 2 AI agents powered by any OpenAI-compatible API
+ * (OpenAI, OpenRouter, Groq, Together, LM Studio, vLLM, ...).
  *
  * Usage:
- *   1. Make sure Ollama is running: ollama serve
- *   2. Pull a model: ollama pull llama3.2
- *   3. From the repo root: npm run build
- *   4. Run: npx ts-node examples/ollama-startup/index.ts
+ *   1. Set OPENAI_BASE_URL, OPENAI_API_KEY and OPENAI_MODEL (e.g. https://api.openai.com/v1, sk-..., gpt-4o-mini)
+ *   2. From the repo root: npm run build
+ *   3. Run: npx ts-node examples/openai-compatible-startup/index.ts
  */
 
 import { Agent, Office, OfficeConfig } from '@agent-office/core';
-import { OllamaAdapter } from '@agent-office/adapters';
+import { OpenAICompatibleAdapter } from '@agent-office/adapters';
 
 // ─── Office Configuration ───
 const officeConfig: OfficeConfig = {
@@ -36,7 +34,9 @@ const officeConfig: OfficeConfig = {
 const office = new Office(officeConfig);
 
 // ─── LLM Adapter ───
-const ollama = new OllamaAdapter('http://localhost:11434');
+const baseUrl = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+const llm = new OpenAICompatibleAdapter(baseUrl, process.env.OPENAI_API_KEY || '');
 
 // ─── Agent: Alice (Engineer) ───
 const alice = new Agent({
@@ -45,8 +45,8 @@ const alice = new Agent({
     role: 'Senior Engineer',
     avatar: 'char_0.png',
     inference: {
-        provider: 'ollama',
-        model: 'llama3.2:latest',
+        provider: 'openai',
+        model,
         systemPrompt: `You are Alice, a senior engineer at a small startup. You love clean code, write TypeScript, and mentor junior developers. You're direct but kind. Keep thoughts SHORT.`,
     },
     personality: {
@@ -78,8 +78,8 @@ const bob = new Agent({
     role: 'Product Manager',
     avatar: 'char_1.png',
     inference: {
-        provider: 'ollama',
-        model: 'llama3.2:latest',
+        provider: 'openai',
+        model,
         systemPrompt: `You are Bob, a product manager at a small startup. You focus on user needs, prioritize features, and keep the team aligned. You're enthusiastic and organized. Keep thoughts SHORT.`,
     },
     personality: {
@@ -104,8 +104,8 @@ const bob = new Agent({
 });
 
 // ─── Connect & Run ───
-alice.setInferenceAdapter(ollama);
-bob.setInferenceAdapter(ollama);
+alice.setInferenceAdapter(llm);
+bob.setInferenceAdapter(llm);
 
 async function main() {
     await alice.initialize();
@@ -113,7 +113,7 @@ async function main() {
 
     console.log(`\n🏢 ${office.config.name}`);
     console.log(`   Agents: ${alice.config.name} (${alice.config.role}), ${bob.config.name} (${bob.config.role})`);
-    console.log(`   Model: llama3.2:latest via Ollama`);
+    console.log(`   Model: ${model} via ${baseUrl}`);
     console.log(`   Grid: ${officeConfig.grid.width}x${officeConfig.grid.height} tiles\n`);
     console.log(`To run the full visual simulation, start the server and UI:`);
     console.log(`   npm run start --workspace=@agent-office/server`);

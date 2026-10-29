@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+- OpenAI-compatible provider (`LLM_PROVIDER=openai`, `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`) with model listing and optional embeddings.
+- Per-agent model selection in the new **🧠 Agent Models** panel; choices are stored in SQLite (`agent_settings`).
+- Ten-agent default roster (Software, ML, DevOps, Fullstack, Architect, QA, UX, Data, Security, PM).
+
+### Removed
+- Ollama support (`OllamaAdapter`, `OLLAMA_URL`, the `ollama` docker-compose service and the `ollama-startup` example).
+
 ## [0.0.2] - 2026-04-13
 
 ### Added

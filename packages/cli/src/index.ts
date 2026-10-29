@@ -43,7 +43,7 @@ program.command('add-agent')
     .description('Add a new agent to your office configuration')
     .requiredOption('-n, --name <name>', 'Name of the agent')
     .requiredOption('-r, --role <role>', 'Role of the agent')
-    .option('-p, --provider <provider>', 'Inference provider', 'ollama')
+    .option('-p, --provider <provider>', 'Inference provider (claude, chatgpt or openai)', 'claude')
     .action((options) => {
         console.log(chalk.yellow(`Adding agent ${options.name} (${options.role}) using ${options.provider}...`));
         // Real implementation would modify office configuration map here

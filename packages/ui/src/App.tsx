@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ChatPanel } from './components/ChatPanel';
 import { TaskBoard } from './components/TaskBoard';
 import { TeamPanel } from './components/TeamPanel';
+import { ModelPanel } from './components/ModelPanel';
 import { LayoutEditor } from './components/LayoutEditor';
 import { SystemLog } from './components/SystemLog';
 import { ViralControlPanel } from './components/ViralControlPanel';
@@ -37,7 +38,7 @@ function Brand() {
             </div>
             {connection === 'error' && (
                 <p style={{ margin: 0, fontSize: 11, color: '#ff7675' }}>
-                    Cannot reach the server at {endpoint}. Start it with <code>npm run start --workspace=@agent-office/server</code> and reload.
+                    Cannot reach the server at {endpoint} — retrying every few seconds. Start it with <code>npm run start --workspace=@agent-office/server</code>.
                 </p>
             )}
         </header>
@@ -60,6 +61,7 @@ export function App() {
                 <Brand />
                 <TeamPanel />
                 <TaskBoard />
+                <ModelPanel />
                 <AgentPulseBoard />
                 <LayoutEditor />
             </aside>

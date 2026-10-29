@@ -17,6 +17,8 @@ export class AgentState extends Schema {
     @type('number') deskX: number;
     @type('number') deskY: number;
     @type('number') sprite: number;
+    @type('string') provider: string;
+    @type('string') model: string;
 
     constructor(id: string, name: string) {
         super();
@@ -26,6 +28,8 @@ export class AgentState extends Schema {
         this.deskX = 0;
         this.deskY = 0;
         this.sprite = 0;
+        this.provider = '';
+        this.model = '';
         this.x = 0;
         this.y = 0;
         this.direction = 'down';

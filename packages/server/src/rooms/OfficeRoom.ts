@@ -1,10 +1,13 @@
 import { Room, Client } from 'colyseus';
 import { OfficeState, AgentState } from '../schema/OfficeState';
 import { Agent, Office, OfficeConfig, ConversationMessage, Decision } from '@agent-office/core';
-import { nextBrain, THINK_COOLDOWN_MS, MAX_CONCURRENT_THINKS, describeEngine } from '../llm';
+import {
+    THINK_COOLDOWN_MS, MAX_CONCURRENT_THINKS, BrainChoice, brainFor, defaultChoice, describeEngine,
+    labelFor, providerInfo, refreshOpenAIModels, validateChoice, createEmbedder
+} from '../llm';
 import { ToolExecutor } from '../tools/ToolExecutor';
 import { MemoryStore } from '../memory/MemoryStore';
-import { AgentProfile, activeRoster, DESK_SEATS, pickAssignee, resolveMentions } from '../agents';
+import { AgentProfile, activeRoster, DESK_SEATS, pickAssignee, resolveMentions, isSimilarTitle, MAX_OPEN_TASKS_PER_AGENT } from '../agents';
 
 interface HighlightEvent {
     type: string;
@@ -77,7 +80,9 @@ export class OfficeRoom extends Room<OfficeState> {
     private talkTargets: Map<string, string> = new Map();
     private hireCount = 0;
     private toolExecutor = new ToolExecutor();
-    private memoryStore = new MemoryStore();
+    private memoryStore = new MemoryStore(createEmbedder());
+    private agentChoices: Map<string, BrainChoice> = new Map();
+    private savedChoices: Record<string, { provider: string; model: string }> = {};
     private sessionId = `session_${Date.now()}`;
     private currentScenario = 'Free Play';
     private highlights: HighlightEvent[] = [];
@@ -94,9 +99,10 @@ export class OfficeRoom extends Room<OfficeState> {
     async onCreate(options: any) {
         OfficeRoom.activeRoom = this;
         this.setState(new OfficeState());
-        this.state.engine = describeEngine();
 
         await this.memoryStore.initialize();
+        await refreshOpenAIModels();
+        this.savedChoices = await this.memoryStore.loadAgentModels();
 
         const config: OfficeConfig = {
             name: options.name || 'Startup HQ',
@@ -114,6 +120,7 @@ export class OfficeRoom extends Room<OfficeState> {
             await this.setupAgent(roster[i], seat, seat);
         }
         this.rebuildRelationshipGraph();
+        this.updateEngineSummary();
         await this.restoreOpenTasks();
 
         const savedLayout = await this.memoryStore.loadLayout('default');
@@ -151,6 +158,23 @@ export class OfficeRoom extends Room<OfficeState> {
             await this.assignTask(title, targetId, 'User');
         });
 
+        // Pick the LLM for one agent, or for everyone with agentId "*".
+        this.onMessage('set-agent-model', async (client, message) => {
+            const choice = validateChoice(message);
+            if (typeof choice === 'string') {
+                client.send('model-error', { agentId: message?.agentId, error: choice });
+                return;
+            }
+            const requested = String(message?.agentId || '');
+            const ids = requested === '*' ? Array.from(this.coreAgents.keys()) : [requested];
+            const applied = ids.filter(id => this.applyBrain(id, choice));
+            if (applied.length === 0) return;
+            await Promise.all(applied.map(id => this.memoryStore.saveAgentModel(id, choice.provider, choice.model)));
+            this.updateEngineSummary();
+            const who = requested === '*' ? 'Everyone' : this.coreAgents.get(applied[0])!.config.name;
+            this.say('System', `🧠 ${who} now thinks with ${labelFor(choice)}.`);
+        });
+
         this.onMessage('save-layout', async (client, message) => {
             const layoutName = cleanText(message?.name, 40) || 'default';
             const layout = this.sanitizeLayout(message?.layout);
@@ -176,7 +200,13 @@ export class OfficeRoom extends Room<OfficeState> {
         state.deskY = seat.y;
         state.sprite = profile.sprite;
 
-        const brain = nextBrain();
+        // Use the model chosen for this agent in the UI, if it is still valid; otherwise the .env default.
+        const saved = this.savedChoices[id] ? validateChoice(this.savedChoices[id]) : null;
+        const choice = saved && typeof saved !== 'string' ? saved : defaultChoice(this.coreAgents.size);
+        const brain = brainFor(choice);
+        this.agentChoices.set(id, choice);
+        state.provider = choice.provider;
+        state.model = choice.model;
         const isLead = /product manager|architect/i.test(role);
         const intro = hiredBy
             ? `You just joined the team, hired by ${hiredBy}. Introduce yourself briefly, then get to work.`
@@ -210,6 +240,25 @@ export class OfficeRoom extends Room<OfficeState> {
         this.profiles.set(id, profile);
         // Stagger the first thoughts so a big team does not hit the LLM all at once.
         this.nextThinkAt.set(id, Date.now() + this.coreAgents.size * 1500);
+    }
+
+    /** Switches an agent to another provider/model; takes effect on its next thought. */
+    private applyBrain(agentId: string, choice: BrainChoice): boolean {
+        const agent = this.coreAgents.get(agentId);
+        const state = this.state.agents.get(agentId);
+        if (!agent || !state) return false;
+        const brain = brainFor(choice);
+        agent.setInferenceAdapter(brain.adapter);
+        agent.config.inference = { ...agent.config.inference, ...brain.inference };
+        this.agentChoices.set(agentId, choice);
+        state.provider = choice.provider;
+        state.model = choice.model;
+        console.log(`[${agent.config.name}] brain switched to ${brain.label}`);
+        return true;
+    }
+
+    private updateEngineSummary() {
+        this.state.engine = describeEngine(Array.from(this.agentChoices.values()));
     }
 
     private agentDirectory() {
@@ -444,6 +493,7 @@ export class OfficeRoom extends Room<OfficeState> {
         await this.setupAgent(profile, seat, DOOR, hiringAgent.config.name);
         this.nextThinkAt.set(id, Date.now() + 3000);
         this.rebuildRelationshipGraph();
+        this.updateEngineSummary();
 
         this.say('🏢 Office', `🎉 ${hiringAgent.config.name} hired ${hireName} as ${role}! Welcome to the team!`);
         this.emitHighlight('hiring', `${hireName} joined the team`, `${hiringAgent.config.name} hired ${hireName} (${role}).`, id);
@@ -474,6 +524,28 @@ export class OfficeRoom extends Room<OfficeState> {
     async assignTask(title: string, agentId: string, assignedBy: string) {
         const agent = this.coreAgents.get(agentId);
         if (!agent) return;
+
+        // Agents keep re-filing the same request; drop duplicates and cap how much they pile on a teammate.
+        if (assignedBy !== 'User') {
+            const open = (await this.memoryStore.getOpenTasks()).filter(t => t.assigned_to === agentId);
+            const duplicate = open.find(t => isSimilarTitle(t.title, title));
+            const reason = duplicate
+                ? `${agent.config.name} already has this as task #${duplicate.id} "${duplicate.title}". Do not file it again; wait or work on something else.`
+                : open.length >= MAX_OPEN_TASKS_PER_AGENT
+                    ? `${agent.config.name} already has ${open.length} open tasks. Do not add more; help them or work on your own task.`
+                    : '';
+            if (reason) {
+                const creatorId = this.resolveAgentId(assignedBy);
+                this.coreAgents.get(creatorId || '')?.addMemory({
+                    content: `My new task "${title}" was not created: ${reason}`,
+                    type: 'observation',
+                    timestamp: this.state.officeTime,
+                    importance: 0.8
+                });
+                return;
+            }
+        }
+
         const busy = this.currentTaskIds.has(agentId);
         const taskId = await this.memoryStore.createTask(title, agentId);
 
@@ -863,6 +935,7 @@ export class OfficeRoom extends Room<OfficeState> {
 
     async onJoin(client: Client) {
         console.log(client.sessionId, 'joined the office room!');
+        client.send('llm-options', { providers: providerInfo() });
         client.send('chat-history', this.chatLog);
         client.send('highlight-history', this.highlights.slice(0, 8));
         client.send('relationship-update', this.buildRelationshipPayload());

@@ -26,7 +26,7 @@ describe('parseDecisionJson', () => {
 function makeAgent(limit: number) {
     return new Agent({
         id: 'a', name: 'A', role: 'Engineer', avatar: '',
-        inference: { provider: 'ollama', model: 'x' },
+        inference: { provider: 'openai', model: 'x' },
         personality: {
             traits: { openness: 0.5, conscientiousness: 0.5, extraversion: 0.5, agreeableness: 0.5, neuroticism: 0.5 },
             communicationStyle: 'technical',

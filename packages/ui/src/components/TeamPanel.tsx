@@ -32,6 +32,7 @@ export function TeamPanel() {
                                 type="button"
                                 className="agent-row"
                                 aria-pressed={selected}
+                                title={`${agent.name} thinks with ${agent.provider} · ${agent.model || 'default'}`}
                                 onClick={() => officeStore.setFocused(selected ? null : agent.id)}
                             >
                                 <span className="dot" style={{ background: agentColor(agent.name) }} aria-hidden="true" />
@@ -52,6 +53,7 @@ export function TeamPanel() {
                 <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: 'rgba(124,108,240,0.1)', border: '1px solid rgba(124,108,240,0.3)', fontSize: 12 }}>
                     <div style={{ fontWeight: 700, fontSize: 13, color: agentColor(focused.name) }}>{focused.name}</div>
                     <div className="muted" style={{ fontSize: 11, marginBottom: 6 }}>{focused.role}</div>
+                    <div style={{ marginBottom: 4 }}><strong>Model:</strong> {focused.provider === 'claude' ? 'Claude' : focused.provider === 'chatgpt' ? 'ChatGPT' : 'OpenAI-compatible'} · {focused.model || 'default'}</div>
                     <div style={{ marginBottom: 4 }}><strong>Task:</strong> {focused.currentTask || <span className="muted">none</span>}</div>
                     <div style={{ marginBottom: 6 }}><strong>Thinking:</strong> {focused.thought ? <em>"{focused.thought}"</em> : <span className="muted">—</span>}</div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3, fontSize: 10, color: '#cbe9df' }}>
