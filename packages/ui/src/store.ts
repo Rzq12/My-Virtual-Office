@@ -18,6 +18,11 @@ export interface AgentInfo {
     sprite: number;
     provider: string;
     model: string;
+    /** Body activity from the server: walk, type, read, sit, stand, talk, present, drink, snack, lounge. */
+    activity: string;
+    energy: number;
+    /** Task workflow phase (plan, research, execute, review, finalize) or ''. */
+    phase: string;
 }
 
 /** An LLM provider the server can use, with model suggestions (sent by the server as llm-options). */
@@ -38,6 +43,9 @@ export interface TaskInfo {
     agentId: string;
     status: TaskStatus;
     summary?: string;
+    /** Latest workflow phase and what happened in it, while the task is in progress. */
+    phase?: string;
+    phaseDetail?: string;
 }
 
 export interface ChatMessage {
@@ -119,6 +127,10 @@ export const officeStore = {
     upsertTask(task: TaskInfo) {
         set({ tasks: mergeTask(snapshot.tasks, task) });
     },
+    setTaskPhase(id: number, phase: string, phaseDetail: string) {
+        if (!snapshot.tasks.some(t => t.id === id)) return;
+        set({ tasks: snapshot.tasks.map(t => (t.id === id ? { ...t, phase, phaseDetail } : t)) });
+    },
     setChat(chat: ChatMessage[]) {
         set({ chat: chat.slice(-MAX_CHAT) });
     },
@@ -136,6 +148,7 @@ export const officeStore = {
 function sameAgent(a: AgentInfo, b: AgentInfo): boolean {
     return a.name === b.name && a.role === b.role && a.action === b.action && a.currentTask === b.currentTask &&
         a.thought === b.thought && a.sprite === b.sprite && a.provider === b.provider && a.model === b.model &&
+        a.activity === b.activity && a.phase === b.phase && Math.abs(a.energy - b.energy) < 0.05 &&
         Math.abs(a.mood - b.mood) < 0.005 && Math.abs(a.reputation - b.reputation) < 0.005 &&
         Math.abs(a.riskLevel - b.riskLevel) < 0.005 && Math.abs(a.momentum - b.momentum) < 0.005;
 }

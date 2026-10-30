@@ -7,8 +7,15 @@ services:
       dockerfile: packages/server/Dockerfile
     ports:
       - "3000:3000"
+    # Pass every setting from .env (TAVILY_API_KEY, THINK_COOLDOWN_MS, ACTIVE_AGENTS, ...).
+    # Values under `environment` below take precedence over .env.
+    env_file: .env
     environment:
       - DATABASE_URL=sqlite:/data/office.db
+      # Memories, tasks, model choices and layout live here; keep it on the mounted volume
+      - MEMORY_DB_PATH=/data/office-memory.db
+      # Keep agent notes on the mounted volume so they survive container rebuilds
+      - AGENT_WORKSPACE=/data/workspace
       - REDIS_URL=redis://redis:6379
       - HOST=0.0.0.0
       # Agents use an OpenAI-compatible API inside Docker (the Claude/Codex CLIs are not installed in the image)

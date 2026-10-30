@@ -19,7 +19,7 @@ export class MemoryStore {
     /** Without an embedder, memories are stored without vectors and semantic search returns nothing. */
     constructor(private embedder?: Embedder) { }
 
-    async initialize(dbPath: string = './data/office-memory.db') {
+    async initialize(dbPath: string = process.env.MEMORY_DB_PATH || './data/office-memory.db') {
         // Ensure data directory exists
         const { mkdir } = await import('fs/promises');
         const path = await import('path');
@@ -223,6 +223,10 @@ export class MemoryStore {
     }
 
     async close(): Promise<void> {
-        if (this.db) await this.db.close();
+        // Unset first: work still in flight when the room disposes (thoughts, task workflows) then becomes a no-op
+        // instead of an SQLITE_MISUSE rejection that takes the whole server down.
+        const db = this.db;
+        this.db = undefined;
+        if (db) await db.close();
     }
 }

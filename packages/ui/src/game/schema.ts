@@ -19,6 +19,10 @@ export class AgentState extends Schema {
     declare sprite: number;
     declare provider: string;
     declare model: string;
+    declare activity: string;
+    declare pose: string;
+    declare energy: number;
+    declare phase: string;
 }
 
 type("string")(AgentState.prototype, "id");
@@ -39,6 +43,10 @@ type("number")(AgentState.prototype, "deskY");
 type("number")(AgentState.prototype, "sprite");
 type("string")(AgentState.prototype, "provider");
 type("string")(AgentState.prototype, "model");
+type("string")(AgentState.prototype, "activity");
+type("string")(AgentState.prototype, "pose");
+type("number")(AgentState.prototype, "energy");
+type("string")(AgentState.prototype, "phase");
 
 
 export class OfficeState extends Schema {

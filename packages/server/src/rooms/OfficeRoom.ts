@@ -1,6 +1,6 @@
 import { Room, Client } from 'colyseus';
 import { OfficeState, AgentState } from '../schema/OfficeState';
-import { Agent, Office, OfficeConfig, ConversationMessage, Decision } from '@agent-office/core';
+import { Agent, Office, OfficeConfig, ConversationMessage, Decision, MemoryEntry } from '@agent-office/core';
 import {
     THINK_COOLDOWN_MS, MAX_CONCURRENT_THINKS, BrainChoice, brainFor, defaultChoice, describeEngine,
     labelFor, providerInfo, refreshOpenAIModels, validateChoice, createEmbedder
@@ -8,6 +8,10 @@ import {
 import { ToolExecutor } from '../tools/ToolExecutor';
 import { MemoryStore } from '../memory/MemoryStore';
 import { AgentProfile, activeRoster, DESK_SEATS, pickAssignee, resolveMentions, isSimilarTitle, MAX_OPEN_TASKS_PER_AGENT } from '../agents';
+import { OfficeLife, LifeInput, WorkPhase, STEP_MS } from '../behavior';
+import { ENTRANCE } from '../officeMap';
+import { Semaphore } from '../limiter';
+import { runTaskWorkflow } from '../workflow/taskWorkflow';
 
 interface HighlightEvent {
     type: string;
@@ -46,7 +50,15 @@ const LAYOUT_TYPES = ['desk', 'plant', 'bookshelf', 'coffee_machine', 'table', '
 const VALID_ACTIONS = ['work', 'talk', 'idle', 'use_tool'];
 const USER_ALIASES = ['user', 'boss', 'manager', 'human', 'you'];
 const HIRE_NAMES = ['Kevin', 'Lina', 'Maya', 'Nanda', 'Oscar', 'Putri', 'Rafi', 'Sari'];
-const DOOR = { x: 20, y: 2 };
+const SIMULATION_MS = 100;
+// What the team list shows while a workflow phase runs.
+const PHASE_ACTIONS: Record<WorkPhase, string> = { plan: 'work', research: 'use_tool', execute: 'work', review: 'talk', finalize: 'work' };
+
+interface WorkflowRun {
+    taskId: number;
+    phase: WorkPhase;
+    reviewerId: string | null;
+}
 
 const BASE_CAPABILITIES = [
     { name: 'code_execute', description: 'Run JavaScript in a sandbox without file or process access. Params: { code: string } — return a value to see it.' },
@@ -71,7 +83,16 @@ export class OfficeRoom extends Room<OfficeState> {
 
     maxClients = 100;
     private office!: Office;
-    private demoTickCount = 0;
+    private stepTicks = 0;
+    private life = new OfficeLife();
+    private llmSlots = new Semaphore(MAX_CONCURRENT_THINKS);
+    /** Task workflows (LangGraph) in progress, by agent id. */
+    private workflows: Map<string, WorkflowRun> = new Map();
+    private lastTools: Map<string, string> = new Map();
+    /** Set when the room closes; running workflows stop at their next LLM call. */
+    private disposed = false;
+    /** Memories already in SQLite. Saving embeds the text, so each memory is written only once. */
+    private persisted = new WeakSet<MemoryEntry>();
     private coreAgents: Map<string, Agent> = new Map();
     private profiles: Map<string, AgentProfile> = new Map();
     private thinking: Set<string> = new Set();
@@ -184,7 +205,7 @@ export class OfficeRoom extends Room<OfficeState> {
             this.say('System', '✅ Office layout saved!');
         });
 
-        this.setSimulationInterval(() => this.update(), 100);
+        this.setSimulationInterval(() => this.update(), SIMULATION_MS);
     }
 
     // ─── AGENTS ───
@@ -199,6 +220,7 @@ export class OfficeRoom extends Room<OfficeState> {
         state.deskX = seat.x;
         state.deskY = seat.y;
         state.sprite = profile.sprite;
+        this.life.add(id, state);
 
         // Use the model chosen for this agent in the UI, if it is still valid; otherwise the .env default.
         const saved = this.savedChoices[id] ? validateChoice(this.savedChoices[id]) : null;
@@ -234,6 +256,7 @@ export class OfficeRoom extends Room<OfficeState> {
         const previousMemories = await this.memoryStore.loadMemories(id, 20);
         if (previousMemories.length > 0) {
             coreAgent.loadMemories(previousMemories);
+            previousMemories.forEach(m => this.persisted.add(m));
         }
 
         this.coreAgents.set(id, coreAgent);
@@ -314,23 +337,38 @@ export class OfficeRoom extends Room<OfficeState> {
         this.state.officeTime = new Date().toISOString();
         this.scheduleThinking();
 
-        this.demoTickCount++;
-        if (this.demoTickCount >= 5) {
-            this.demoTickCount = 0;
-            this.moveAgents();
+        this.stepTicks++;
+        if (this.stepTicks * SIMULATION_MS >= STEP_MS) {
+            this.stepTicks = 0;
+            this.life.step(this.state.agents, id => this.lifeInput(id));
         }
     }
 
+    /** What the movement controller needs to know about an agent's mind. */
+    private lifeInput(id: string): LifeInput {
+        const run = this.workflows.get(id);
+        return {
+            action: this.state.agents.get(id)?.action || 'idle',
+            talkTo: this.talkTargets.get(id),
+            phase: run?.phase || '',
+            reviewerId: run?.reviewerId || undefined,
+            lastTool: this.lastTools.get(id),
+            urgent: this.urgency(id) === 2
+        };
+    }
+
     private scheduleThinking() {
-        if (this.thinking.size >= MAX_CONCURRENT_THINKS) return;
         const now = Date.now();
         const ready = Array.from(this.coreAgents.keys())
             .filter(id => !this.thinking.has(id) && now >= (this.nextThinkAt.get(id) || 0))
+            // During a task workflow the agent is heads-down and only stops to answer messages.
+            .filter(id => !this.workflows.has(id) || this.urgency(id) > 0)
             // Agents with unread messages (especially from the User) go first.
             .sort((a, b) => this.urgency(b) - this.urgency(a) || (this.nextThinkAt.get(a) || 0) - (this.nextThinkAt.get(b) || 0));
 
         for (const id of ready) {
-            if (this.thinking.size >= MAX_CONCURRENT_THINKS) break;
+            // A reply to the user may take one slot above the limit so it never queues behind task work.
+            if (!this.llmSlots.tryAcquire(this.urgency(id) === 2 ? 1 : 0)) break;
             void this.runThink(id);
         }
     }
@@ -341,10 +379,14 @@ export class OfficeRoom extends Room<OfficeState> {
         return inbox.length > 0 ? 1 : 0;
     }
 
+    /** One social think cycle. The caller has taken an LLM slot, which is released here. */
     private async runThink(id: string) {
         const coreAgent = this.coreAgents.get(id);
         const agentState = this.state.agents.get(id);
-        if (!coreAgent || !agentState) return;
+        if (!coreAgent || !agentState) {
+            this.llmSlots.release();
+            return;
+        }
         this.thinking.add(id);
 
         try {
@@ -380,12 +422,11 @@ export class OfficeRoom extends Room<OfficeState> {
 
             await this.applyDecision(id, coreAgent, agentState, decision);
 
-            if (Math.random() < 0.3) {
-                await this.memoryStore.saveMemories(id, coreAgent.memories.slice(-3), this.sessionId);
-            }
+            await this.persistNew(id, coreAgent.memories);
         } catch (err) {
             console.error(`Agent ${id} think error:`, err);
         } finally {
+            this.llmSlots.release();
             this.thinking.delete(id);
             const userWaiting = coreAgent.inbox.some(m => m.from === 'User');
             this.nextThinkAt.set(id, userWaiting ? 0 : Date.now() + THINK_COOLDOWN_MS);
@@ -429,6 +470,7 @@ export class OfficeRoom extends Room<OfficeState> {
         const toolName = typeof tool?.name === 'string' ? tool.name : '';
         if (!toolName || (action !== 'use_tool' && toolName !== 'complete_task')) return;
         const params = tool?.params && typeof tool.params === 'object' ? tool.params : {};
+        this.lastTools.set(id, toolName);
 
         if (toolName === 'create_task') {
             const title = cleanText(params.title, 200);
@@ -436,6 +478,15 @@ export class OfficeRoom extends Room<OfficeState> {
             const targetId = this.resolveAgentId(params.assignee) || await this.autoAssignAgent(title);
             if (targetId) await this.assignTask(title, targetId, name);
         } else if (toolName === 'complete_task') {
+            if (this.workflows.has(id)) {
+                coreAgent.addMemory({
+                    content: 'My task workflow is still running; it completes the task after the review.',
+                    type: 'observation',
+                    timestamp: this.state.officeTime,
+                    importance: 0.5
+                });
+                return;
+            }
             await this.completeCurrentTask(id, cleanText(params.summary, 600) || 'Done.');
         } else if (toolName === 'hire_agent') {
             await this.hireAgent(coreAgent, cleanText(params.name, 30), cleanText(params.role, 40));
@@ -461,7 +512,14 @@ export class OfficeRoom extends Room<OfficeState> {
             importance: 0.6
         };
         coreAgent.addMemory(entry);
-        void this.memoryStore.saveMemory(id, entry, this.sessionId);
+        void this.persistNew(id, [entry]);
+    }
+
+    /** Writes the memories that are not in SQLite yet. */
+    private async persistNew(agentId: string, entries: MemoryEntry[]) {
+        const fresh = entries.filter(e => !this.persisted.has(e));
+        fresh.forEach(e => this.persisted.add(e));
+        if (fresh.length > 0) await this.memoryStore.saveMemories(agentId, fresh, this.sessionId);
     }
 
     private async hireAgent(hiringAgent: Agent, requestedName: string, requestedRole: string) {
@@ -490,7 +548,7 @@ export class OfficeRoom extends Room<OfficeState> {
             keywords: role.toLowerCase().split(/[^a-z]+/).filter(w => w.length > 2),
             sprite: this.coreAgents.size
         };
-        await this.setupAgent(profile, seat, DOOR, hiringAgent.config.name);
+        await this.setupAgent(profile, seat, ENTRANCE, hiringAgent.config.name);
         this.nextThinkAt.set(id, Date.now() + 3000);
         this.rebuildRelationshipGraph();
         this.updateEngineSummary();
@@ -580,10 +638,132 @@ export class OfficeRoom extends Room<OfficeState> {
             importance: 0.8
         });
         this.broadcastTask(taskId, title, agentId, 'in_progress');
-        this.nextThinkAt.set(agentId, Math.min(this.nextThinkAt.get(agentId) || 0, Date.now() + 2000));
+        void this.runWorkflow(agentId, taskId, title);
     }
 
-    async completeCurrentTask(agentId: string, summary: string) {
+    // ─── TASK WORKFLOW (LangGraph) ───
+
+    /** Plans, researches, writes and gets the task reviewed by a teammate, then completes it. */
+    private async runWorkflow(agentId: string, taskId: number, title: string) {
+        const agent = this.coreAgents.get(agentId);
+        const state = this.state.agents.get(agentId);
+        if (!agent || !state || this.workflows.has(agentId)) return;
+        const reviewerId = this.pickReviewer(agentId);
+        const reviewer = reviewerId ? this.coreAgents.get(reviewerId)! : null;
+        const run: WorkflowRun = { taskId, phase: 'plan', reviewerId };
+        this.workflows.set(agentId, run);
+        const name = agent.config.name;
+        const isCurrent = () => !this.disposed && this.workflows.get(agentId) === run;
+
+        try {
+            const outcome = await runTaskWorkflow(title, {
+                author: { name, role: agent.config.role, focus: this.profiles.get(agentId)?.focus },
+                reviewer: reviewer && reviewerId
+                    ? { name: reviewer.config.name, role: reviewer.config.role, focus: this.profiles.get(reviewerId)?.focus }
+                    : null,
+                askAuthor: prompt => this.askAgent(agentId, prompt),
+                askReviewer: prompt => this.askAgent(reviewerId!, prompt),
+                search: async query => {
+                    const result = await this.toolExecutor.execute('web_search', { query }, { agentName: name });
+                    return result.success ? result.output : `Search failed: ${result.error}`;
+                },
+                onPhase: (phase, detail) => {
+                    if (isCurrent()) this.showWorkflowPhase(agentId, run, phase, detail);
+                },
+                onPlan: steps => {
+                    if (isCurrent()) this.say(name, `📝 Plan for "${title}": ${steps.map((s, i) => `${i + 1}) ${s}`).join(' ')}`);
+                },
+                onReview: (approved, feedback) => {
+                    if (!isCurrent() || !reviewer || !reviewerId) return;
+                    const verdict = approved ? '✅ Approved' : '✏️ Changes requested';
+                    this.say(reviewer.config.name, `🧐 Review for ${name}: ${verdict}${feedback ? ` — ${feedback}` : ''}`);
+                    this.emitHighlight('review', `${reviewer.config.name} reviewed ${name}'s work`, `${verdict} on "${title}"`, reviewerId);
+                    this.updateRelationship(agentId, reviewerId, approved ? 0.06 : -0.02);
+                }
+            });
+            if (!isCurrent() || this.currentTaskIds.get(agentId) !== taskId) return;
+            this.workflows.delete(agentId);
+            state.phase = '';
+            const reviewNote = outcome.revisions > 0 ? ` (after ${outcome.revisions} revision)` : '';
+            await this.completeCurrentTask(agentId, `${outcome.summary}${reviewNote}`, outcome.deliverable);
+        } catch (err: any) {
+            console.error(`[${name}] task workflow failed:`, err);
+            if (isCurrent()) this.say('System', `⚠️ ${name}'s workflow for "${title}" failed (${err?.message || err}). They will finish it on their own.`);
+        } finally {
+            if (isCurrent()) {
+                // The social loop takes the task over (it can call complete_task again).
+                this.workflows.delete(agentId);
+                state.phase = '';
+            }
+        }
+    }
+
+    private showWorkflowPhase(agentId: string, run: WorkflowRun, phase: WorkPhase, detail: string) {
+        const agent = this.coreAgents.get(agentId);
+        const state = this.state.agents.get(agentId);
+        if (!agent || !state) return;
+        run.phase = phase;
+        state.phase = phase;
+        state.action = PHASE_ACTIONS[phase];
+        state.thought = cleanText(detail, 120);
+        this.broadcast('workflow-update', { taskId: run.taskId, agentId, phase, detail: cleanText(detail, 300) });
+        agent.addMemory({
+            content: `[task ${phase}] ${cleanText(detail, 200)}`,
+            type: 'observation',
+            timestamp: this.state.officeTime,
+            // Progress notes: below 0.5 so they are not embedded (see MemoryStore.saveMemory).
+            importance: 0.4
+        });
+        if (phase === 'research') this.say(agent.config.name, `🔎 ${detail}`);
+        if (phase === 'review' && run.reviewerId && detail.startsWith('Asking')) {
+            this.emitHighlight('review', `${agent.config.name} asks for a review`, cleanText(detail, 120), agentId);
+        }
+    }
+
+    /**
+     * QA, the architect and the product manager review, whoever has the fewest reviews in progress
+     * (ties go in that order), so one reviewer does not get a queue of people at their desk. Never the author.
+     */
+    private pickReviewer(authorId: string): string | null {
+        const load = new Map<string, number>();
+        this.workflows.forEach(run => {
+            if (run.reviewerId) load.set(run.reviewerId, (load.get(run.reviewerId) || 0) + 1);
+        });
+        const candidates: string[] = [];
+        for (const pattern of [/qa/i, /architect/i, /product manager/i]) {
+            for (const [id, agent] of this.coreAgents) {
+                if (id !== authorId && pattern.test(agent.config.role) && !candidates.includes(id)) candidates.push(id);
+            }
+        }
+        if (candidates.length === 0) return Array.from(this.coreAgents.keys()).find(id => id !== authorId) || null;
+        // Stable sort keeps the role order for equal load.
+        return candidates.sort((a, b) => (load.get(a) || 0) - (load.get(b) || 0))[0];
+    }
+
+    /** One LLM call with this agent's brain, sharing the concurrency limit with the social loop. */
+    private async askAgent(agentId: string, prompt: string): Promise<string> {
+        const agent = this.coreAgents.get(agentId);
+        const choice = this.agentChoices.get(agentId);
+        if (!agent || !choice) throw new Error(`Unknown agent ${agentId}`);
+        const brain = brainFor(choice);
+        await this.llmSlots.acquire();
+        if (this.disposed) {
+            this.llmSlots.release();
+            throw new Error('The office closed');
+        }
+        try {
+            const res = await brain.adapter.complete({
+                model: choice.model,
+                messages: [{ role: 'user', content: `${agent.config.inference.systemPrompt}\n\n${prompt}` }],
+                temperature: 0.5
+            });
+            return res.content || '';
+        } finally {
+            this.llmSlots.release();
+        }
+    }
+
+    async completeCurrentTask(agentId: string, summary: string, details = '') {
         const agent = this.coreAgents.get(agentId);
         const state = this.state.agents.get(agentId);
         const taskId = this.currentTaskIds.get(agentId);
@@ -606,7 +786,7 @@ export class OfficeRoom extends Room<OfficeState> {
         state.reputation = this.clamp01(state.reputation + 0.1);
         state.mood = this.clamp01(state.mood + 0.05);
 
-        await this.toolExecutor.writeNote(`Completed task #${taskId} "${title}"\n\n${summary}`, agent.config.name);
+        await this.toolExecutor.writeNote(`Completed task #${taskId} "${title}"\n\n${summary}${details ? `\n\n${details}` : ''}`, agent.config.name);
         agent.addMemory({
             content: `I completed task #${taskId} "${title}": ${summary.slice(0, 200)}`,
             type: 'achievement',
@@ -639,33 +819,6 @@ export class OfficeRoom extends Room<OfficeState> {
             if (!this.coreAgents.has(agentId) || this.currentTaskIds.has(agentId)) continue;
             await this.startTask(agentId, task.id, task.title);
         }
-    }
-
-    // ─── MOVEMENT ───
-
-    private moveAgents() {
-        const clamp = (agent: AgentState) => {
-            agent.x = Math.max(2, Math.min(36, agent.x));
-            agent.y = Math.max(2, Math.min(36, agent.y));
-        };
-
-        this.state.agents.forEach((agent, key) => {
-            let target = { x: agent.deskX, y: agent.deskY };
-
-            // While talking, walk over to stand next to the person being addressed.
-            const partner = agent.action === 'talk' ? this.state.agents.get(this.talkTargets.get(key) || '') : undefined;
-            if (partner) {
-                const dist = Math.abs(agent.x - partner.x) + Math.abs(agent.y - partner.y);
-                if (dist <= 1) return;
-                target = { x: partner.x + 1, y: partner.y };
-            }
-
-            if (agent.x < target.x) agent.x += 1;
-            else if (agent.x > target.x) agent.x -= 1;
-            else if (agent.y < target.y) agent.y += 1;
-            else if (agent.y > target.y) agent.y -= 1;
-            clamp(agent);
-        });
     }
 
     // ─── CHAT / HIGHLIGHTS ───
@@ -949,9 +1102,10 @@ export class OfficeRoom extends Room<OfficeState> {
 
     async onDispose() {
         console.log('room', this.roomId, 'disposing... saving memories');
+        this.disposed = true;
         OfficeRoom.activeRoom = null;
         for (const [id, agent] of this.coreAgents) {
-            await this.memoryStore.saveMemories(id, agent.memories, this.sessionId);
+            await this.persistNew(id, agent.memories);
         }
         await this.memoryStore.close();
     }

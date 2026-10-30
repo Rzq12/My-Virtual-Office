@@ -17,6 +17,33 @@ const statusLabel = (s: TaskStatus) => {
     return '⏳ Queued';
 };
 
+// Nodes of the server's LangGraph task workflow (packages/server/src/workflow/taskWorkflow.ts).
+const PHASES = [
+    { id: 'plan', icon: '📝' },
+    { id: 'research', icon: '🔎' },
+    { id: 'execute', icon: '⌨️' },
+    { id: 'review', icon: '🤝' },
+    { id: 'finalize', icon: '🖨️' }
+];
+
+/** Workflow progress as icons; done steps are bright, the current one is outlined. */
+function PhaseSteps({ current }: { current: string }) {
+    const index = PHASES.findIndex(p => p.id === current);
+    return (
+        <span aria-label={`Workflow step: ${current}`}>
+            {PHASES.map((p, i) => (
+                <span key={p.id} title={p.id} style={{
+                    opacity: i <= index ? 1 : 0.3,
+                    outline: i === index ? '1px solid #a29bfe' : 'none',
+                    borderRadius: 3,
+                    padding: '0 1px',
+                    marginRight: 1
+                }}>{p.icon}</span>
+            ))}
+        </span>
+    );
+}
+
 export function TaskBoard() {
     const tasks = useOffice(s => s.tasks);
     const agents = useOffice(s => s.agents);
@@ -90,6 +117,11 @@ export function TaskBoard() {
                             <span>→ {names[task.agentId] || task.agentId || 'Unassigned'}</span>
                             <span>{statusLabel(task.status)}</span>
                         </div>
+                        {task.status === 'in_progress' && task.phase && (
+                            <div style={{ fontSize: 10, color: '#b8c4ff', marginTop: 3 }} title={task.phaseDetail}>
+                                <PhaseSteps current={task.phase} /> {task.phaseDetail}
+                            </div>
+                        )}
                         {task.summary && <div style={{ fontSize: 10, color: '#cfe9df', marginTop: 3 }}>{task.summary}</div>}
                     </div>
                 ))}

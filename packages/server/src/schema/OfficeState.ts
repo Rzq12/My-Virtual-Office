@@ -19,6 +19,13 @@ export class AgentState extends Schema {
     @type('number') sprite: number;
     @type('string') provider: string;
     @type('string') model: string;
+    /** What the body is doing, for animation: walk, type, read, sit, stand, talk, present, drink, snack, lounge. */
+    @type('string') activity: string;
+    @type('string') pose: string;
+    /** 0-1; drains while working, refilled by breaks in the pantry. */
+    @type('number') energy: number;
+    /** Current node of the task workflow (plan, research, execute, review, finalize), or ''. */
+    @type('string') phase: string;
 
     constructor(id: string, name: string) {
         super();
@@ -40,6 +47,10 @@ export class AgentState extends Schema {
         this.reputation = 0.5;
         this.riskLevel = 0.2;
         this.momentum = 0.4;
+        this.activity = 'stand';
+        this.pose = 'stand';
+        this.energy = 1;
+        this.phase = '';
     }
 }
 

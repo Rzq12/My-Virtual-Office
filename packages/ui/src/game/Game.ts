@@ -8,6 +8,18 @@ let activeRoom: Colyseus.Room<OfficeState> | undefined;
 
 const CHARACTER_SHEETS = 6;
 const RECONNECT_DELAY_MS = 3000;
+// One tile step on the server (STEP_MS in packages/server/src/behavior.ts); each step is tweened over the same time.
+const STEP_MS = 300;
+// Sprites are drawn this much lower while seated so the character sinks into the chair.
+const SIT_OFFSET = 6;
+// Sheet layout (pixel-agents format): rows down/up/right; per row walk 0-2, type 3-4, read 5-6.
+const SHEET_ROWS = { down: 0, up: 7, right: 14 } as const;
+const ACTIVITY_EMOTES: Record<string, string> = {
+    type: '💻', read: '📖', talk: '💬', present: '📊', drink: '☕', snack: '🍩', lounge: '😌'
+};
+// Break emotes stay up for the whole break; the others fade after a few seconds.
+const LASTING_EMOTES = ['drink', 'snack', 'lounge'];
+const PHASE_EMOTES: Record<string, string> = { plan: '📝', research: '🔎', execute: '⌨️', review: '🤝', finalize: '🖨️' };
 // Tints for agents beyond the six base sprites so every teammate looks distinct.
 const SPRITE_TINTS = [0xffffff, 0xffc9c9, 0xc9e4ff, 0xd4ffc9, 0xfff1c9, 0xe9c9ff];
 const LABEL_FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
@@ -62,6 +74,8 @@ export class OfficeScene extends Phaser.Scene {
     private layoutDragItemId: string | null = null;
     private gridSize = 40 * 16;
     private heldMoveKeys: Set<'left' | 'right' | 'up' | 'down'> = new Set();
+    /** Per-agent movement, advanced every frame from update(). */
+    private walkTicks: Map<string, (deltaMs: number) => void> = new Map();
 
     constructor() {
         super('OfficeScene');
@@ -91,9 +105,11 @@ export class OfficeScene extends Phaser.Scene {
             for (let i = 0; i < CHARACTER_SHEETS; i++) {
                 const key = `char_${i}`;
                 if (!this.textures.exists(key)) continue;
-                anims.create({ key: `${key}-walk-down`, frames: anims.generateFrameNumbers(key, { start: 0, end: 2 }), frameRate: 8, repeat: -1 });
-                anims.create({ key: `${key}-walk-up`, frames: anims.generateFrameNumbers(key, { start: 7, end: 9 }), frameRate: 8, repeat: -1 });
-                anims.create({ key: `${key}-walk-right`, frames: anims.generateFrameNumbers(key, { start: 14, end: 16 }), frameRate: 8, repeat: -1 });
+                for (const [dir, row] of Object.entries(SHEET_ROWS)) {
+                    anims.create({ key: `${key}-walk-${dir}`, frames: anims.generateFrameNumbers(key, { frames: [row, row + 1, row + 2, row + 1] }), frameRate: 10, repeat: -1 });
+                    anims.create({ key: `${key}-type-${dir}`, frames: anims.generateFrameNumbers(key, { frames: [row + 3, row + 4] }), frameRate: 5, repeat: -1 });
+                    anims.create({ key: `${key}-read-${dir}`, frames: anims.generateFrameNumbers(key, { frames: [row + 5, row + 6] }), frameRate: 2, repeat: -1 });
+                }
             }
 
             const gridSize = this.gridSize;
@@ -134,23 +150,30 @@ export class OfficeScene extends Phaser.Scene {
             // Meeting room walls
             g.lineStyle(3, 0x6c5ce7, 0.9);
             g.strokeRect(32, 32, 200, 160);
+            // Door gaps line up with the walkable door tiles in packages/server/src/officeMap.ts.
             // Door gap (bottom-right of meeting room)
             g.fillStyle(0x33334a, 1);
-            g.fillRect(192, 188, 40, 6);
+            g.fillRect(185, 189, 46, 6);
 
             // Collab area walls
             g.lineStyle(3, 0xe17055, 0.9);
             g.strokeRect(280, 32, 200, 160);
-            // Door gap
+            // Door gap (bottom-left)
             g.fillStyle(0x33334a, 1);
-            g.fillRect(280, 160, 40, 6);
+            g.fillRect(282, 189, 30, 6);
 
             // Coffee area border
             g.lineStyle(2, 0x00b894, 0.7);
             g.strokeRect(350, 350, 176, 176);
             // Door gap
             g.fillStyle(0x33334a, 1);
-            g.fillRect(350, 410, 4, 40);
+            g.fillRect(347, 409, 6, 30);
+
+            // Entrance at the top of the hallway between the meeting room and the collab area
+            g.fillStyle(0x6d4c2e, 1);
+            g.fillRect(250, 0, 12, 10);
+            g.fillStyle(0x8b6a4a, 1);
+            g.fillRect(248, 12, 16, 8); // door mat
 
             // Room labels
             this.add.text(132, 46, '🏢 Meeting Room', { fontFamily: LABEL_FONT, fontSize: '10px', color: '#b8a9d4' }).setOrigin(0.5);
@@ -163,16 +186,16 @@ export class OfficeScene extends Phaser.Scene {
 
             // Large meeting table
             g.fillStyle(0x6d4c2e, 1);
-            g.fillRect(72, 80, 120, 60);
+            g.fillRect(72, 72, 112, 64);
             g.fillStyle(0x7d5c3e, 1);
-            g.fillRect(76, 84, 112, 52); // table top highlight
+            g.fillRect(76, 76, 104, 56); // table top highlight
 
-            // Chairs around meeting table (pixel circles)
+            // Chairs around meeting table, on the meeting seat tiles agents sit on
             const chairColor = 0x4a4a6a;
-            const chairs = [[92, 72], [132, 72], [172, 72], // top row
-            [92, 148], [132, 148], [172, 148], // bottom row
-            [64, 100], [64, 128], // left
-            [200, 100], [200, 128]]; // right
+            const chairs = [[96, 64], [128, 64], [160, 64], // top row
+            [96, 144], [128, 144], [160, 144], // bottom row
+            [64, 96], [64, 128], // left
+            [192, 96], [192, 128]]; // right
             chairs.forEach(([cx, cy]) => {
                 g.fillStyle(chairColor, 1);
                 g.fillCircle(cx, cy, 6);
@@ -224,11 +247,11 @@ export class OfficeScene extends Phaser.Scene {
 
             // Bean bags / lounge chairs in collab
             g.fillStyle(0xe17055, 0.6);
-            g.fillCircle(320, 150, 14);
+            g.fillCircle(320, 144, 14);
             g.fillStyle(0xfdcb6e, 0.6);
-            g.fillCircle(370, 155, 14);
+            g.fillCircle(368, 160, 14);
             g.fillStyle(0x6c5ce7, 0.6);
-            g.fillCircle(430, 148, 14);
+            g.fillCircle(432, 144, 14);
 
             // Work desks are drawn per agent in drawWorkstation() once the roster arrives.
             this.deskGraphics = this.add.graphics();
@@ -262,9 +285,9 @@ export class OfficeScene extends Phaser.Scene {
 
             // Small table with snacks
             g.fillStyle(0x5a3e28, 1);
-            g.fillRect(380, 440, 40, 30);
+            g.fillRect(376, 440, 48, 32);
             g.fillStyle(0x6d4c2e, 1);
-            g.fillRect(382, 442, 36, 26);
+            g.fillRect(378, 442, 44, 28);
             // Fruit bowl
             g.fillStyle(0xfdcb6e, 1);
             g.fillCircle(392, 452, 4);
@@ -275,10 +298,10 @@ export class OfficeScene extends Phaser.Scene {
 
             // Chairs around snack table
             g.fillStyle(0x4a4a6a, 1);
-            g.fillCircle(375, 445, 5);
-            g.fillCircle(375, 460, 5);
-            g.fillCircle(425, 445, 5);
-            g.fillCircle(425, 460, 5);
+            g.fillCircle(368, 448, 5);
+            g.fillCircle(368, 464, 5);
+            g.fillCircle(432, 448, 5);
+            g.fillCircle(432, 464, 5);
 
             // Water cooler
             g.fillStyle(0x74b9ff, 0.6);
@@ -313,7 +336,7 @@ export class OfficeScene extends Phaser.Scene {
 
             drawPlant(24, 210);   // near desks
             drawPlant(140, 210);  // between meeting room and desks
-            drawPlant(250, 210);  // center
+            drawPlant(608, 296);  // right corridor (kept out of the hallway exit)
             drawPlant(530, 380);  // near coffee area
             drawPlant(24, 500);   // bottom left
             drawPlant(550, 200);  // right side
@@ -467,6 +490,7 @@ export class OfficeScene extends Phaser.Scene {
     private resetAgents() {
         this.agentSprites.forEach(sprite => sprite.destroy());
         this.agentSprites.clear();
+        this.walkTicks.clear();
         this.deskLabels.forEach(label => label.destroy());
         this.deskLabels.clear();
         this.deskGraphics?.clear();
@@ -508,6 +532,11 @@ export class OfficeScene extends Phaser.Scene {
                 status: task.status,
                 summary: task.summary
             }));
+            room.onMessage('workflow-update', (update: any) => officeStore.setTaskPhase(
+                Number(update?.taskId),
+                String(update?.phase || ''),
+                String(update?.detail || '')
+            ));
             room.onMessage('highlight-history', (items: any) => {
                 if (!Array.isArray(items)) return;
                 [...items].reverse().forEach(item => eventBus.dispatchEvent(new CustomEvent('highlight-event', { detail: item })));
@@ -540,14 +569,16 @@ export class OfficeScene extends Phaser.Scene {
 
                     const spriteIndex = Number(agent.sprite || 0);
                     const charKey = `char_${spriteIndex % CHARACTER_SHEETS}`;
+                    // Feet-anchored so seating offsets and the breathing tween keep the feet in place.
                     let sprite: Phaser.GameObjects.Sprite | Phaser.GameObjects.Rectangle;
                     if (this.textures.exists(charKey)) {
-                        sprite = this.add.sprite(0, -8, charKey, 0);
+                        sprite = this.add.sprite(0, 8, charKey, SHEET_ROWS.down + 1).setOrigin(0.5, 1);
                         const tint = SPRITE_TINTS[Math.floor(spriteIndex / CHARACTER_SHEETS) % SPRITE_TINTS.length];
                         if (tint !== 0xffffff) sprite.setTint(tint);
                     } else {
-                        sprite = this.add.rectangle(0, -8, 16, 32, 0x3a86ff);
+                        sprite = this.add.rectangle(0, 8, 16, 32, 0x3a86ff).setOrigin(0.5, 1);
                     }
+                    const energyBar = this.add.graphics();
 
                     // Thought bubble (word-wrapped)
                     const thoughtBubble = this.add.text(0, -26, '', {
@@ -580,7 +611,7 @@ export class OfficeScene extends Phaser.Scene {
                     focusRing.strokeCircle(0, -6, 13);
                     focusRing.setVisible(false);
 
-                    container.add([focusRing, sprite, thoughtBubble, emoteBubble, label]);
+                    container.add([focusRing, sprite, thoughtBubble, emoteBubble, label, energyBar]);
                     container.setSize(20, 34);
                     container.setInteractive(new Phaser.Geom.Rectangle(-10, -24, 20, 34), Phaser.Geom.Rectangle.Contains);
                     this.agentSprites.set(sessionId, container);
@@ -608,7 +639,10 @@ export class OfficeScene extends Phaser.Scene {
                         momentum: Number(agent.momentum || 0),
                         sprite: spriteIndex,
                         provider: agent.provider || '',
-                        model: agent.model || ''
+                        model: agent.model || '',
+                        activity: agent.activity || '',
+                        energy: Number(agent.energy ?? 1),
+                        phase: agent.phase || ''
                     });
                     publish();
                     let lastThought = agent.thought || '';
@@ -616,41 +650,138 @@ export class OfficeScene extends Phaser.Scene {
                     let prevX = agent.x;
                     let prevY = agent.y;
                     let lastAction = '';
+                    let lastActivity = '';
+                    let lastPhase = '';
+                    let lastEnergyBucket = -1;
+                    // Tiles the server has stepped to that the sprite has not reached yet (pixel coordinates).
+                    const waypoints: Array<{ x: number; y: number }> = [];
+                    let shownPose = '';
+                    let breathTween: Phaser.Tweens.Tween | undefined;
+                    let emoteTimer: Phaser.Time.TimerEvent | undefined;
+
+                    const showEmote = (text: string, lasting: boolean) => {
+                        emoteTimer?.remove();
+                        emoteBubble.setText(text).setVisible(true);
+                        if (!lasting) emoteTimer = this.time.delayedCall(3500, () => emoteBubble.setVisible(false));
+                    };
+
+                    // Standing characters breathe; talkers bob faster. Seated or walking ones hold still.
+                    const setBreathing = (activity: string, pose: string) => {
+                        breathTween?.stop();
+                        breathTween = undefined;
+                        sprite.setScale(1, 1);
+                        if (pose !== 'stand' || activity === 'walk') return;
+                        const talking = activity === 'talk' || activity === 'present';
+                        breathTween = this.tweens.add({
+                            targets: sprite,
+                            scaleY: talking ? 1.05 : 1.025,
+                            duration: talking ? 220 : 900,
+                            yoyo: true,
+                            repeat: -1,
+                            ease: 'Sine.easeInOut'
+                        });
+                    };
+
+                    const drawEnergy = (energy: number) => {
+                        const bucket = Math.round(Math.max(0, Math.min(1, energy)) * 20);
+                        if (bucket === lastEnergyBucket) return;
+                        lastEnergyBucket = bucket;
+                        const color = bucket > 10 ? 0x55efc4 : bucket > 5 ? 0xfdcb6e : 0xff7675;
+                        energyBar.clear();
+                        energyBar.fillStyle(0x0b0c1e, 0.85);
+                        energyBar.fillRect(-9, 20, 18, 3);
+                        energyBar.fillStyle(color, 1);
+                        energyBar.fillRect(-8, 21, Math.max(1, Math.round(16 * bucket / 20)), 1);
+                    };
+                    drawEnergy(Number(agent.energy ?? 1));
+
+                    /** Walk animation facing the next waypoint, judged from where the sprite is on screen. */
+                    const playWalk = (to: { x: number; y: number }) => {
+                        sprite.y = 8;
+                        if (shownPose !== 'walk') {
+                            setBreathing('walk', 'stand');
+                            shownPose = 'walk';
+                        }
+                        if (sprite.type !== 'Sprite') return;
+                        const s = sprite as Phaser.GameObjects.Sprite;
+                        const dx = to.x - container.x;
+                        const dy = to.y - container.y;
+                        const horizontal = Math.abs(dx) > Math.abs(dy);
+                        s.setFlipX(horizontal && dx < 0);
+                        s.anims.timeScale = 1;
+                        s.play(`${charKey}-walk-${horizontal ? 'right' : dy < 0 ? 'up' : 'down'}`, true);
+                    };
+
+                    const applyPose = () => {
+                        // Still walking on screen, or the server is a step ahead: the pose is applied on arrival.
+                        if (waypoints.length > 0 || agent.activity === 'walk') return;
+                        const activity = agent.activity || 'stand';
+                        const pose = agent.pose === 'sit' ? 'sit' : 'stand';
+                        sprite.y = pose === 'sit' ? 8 + SIT_OFFSET : 8;
+                        if (`${activity}|${pose}` !== shownPose) {
+                            setBreathing(activity, pose);
+                            shownPose = `${activity}|${pose}`;
+                        }
+                        if (sprite.type !== 'Sprite') return;
+                        const s = sprite as Phaser.GameObjects.Sprite;
+                        const dir = agent.direction === 'up' || agent.direction === 'down' ? agent.direction : 'right';
+                        s.setFlipX(agent.direction === 'left');
+                        if (activity === 'type') s.play(`${charKey}-type-${dir}`, true);
+                        else if (['read', 'present', 'drink', 'snack'].includes(activity)) s.play(`${charKey}-read-${dir}`, true);
+                        else s.stop().setFrame(SHEET_ROWS[dir] + 1); // standing or sitting still
+                        // Sipping coffee and snacking are slower than reading.
+                        s.anims.timeScale = activity === 'drink' || activity === 'snack' ? 0.5 : 1;
+                    };
+                    applyPose();
+
+                    // Moves at a constant speed every frame instead of one tween per server patch, so uneven
+                    // patch timing never makes the walk stop and start. Speeds up a little when it falls behind.
+                    this.walkTicks.set(sessionId, (deltaMs: number) => {
+                        if (waypoints.length === 0) return;
+                        let budget = (16 / STEP_MS) * (waypoints.length > 2 ? 1.6 : 1) * deltaMs;
+                        while (budget > 0 && waypoints.length > 0) {
+                            const target = waypoints[0];
+                            const dx = target.x - container.x;
+                            const dy = target.y - container.y;
+                            const dist = Math.hypot(dx, dy);
+                            if (dist <= budget) {
+                                container.setPosition(target.x, target.y);
+                                budget -= dist;
+                                waypoints.shift();
+                                if (waypoints.length > 0) playWalk(waypoints[0]);
+                            } else {
+                                container.x += (dx / dist) * budget;
+                                container.y += (dy / dist) * budget;
+                                budget = 0;
+                            }
+                        }
+                        if (waypoints.length === 0) applyPose();
+                    });
 
                     agent.onChange(() => {
-                        this.tweens.add({
-                            targets: container,
-                            x: agent.x * 16,
-                            y: agent.y * 16,
-                            duration: 100,
-                            onComplete: () => {
-                                if (sprite.type === 'Sprite') {
-                                    (sprite as Phaser.GameObjects.Sprite).stop();
-                                }
+                        if (agent.x !== prevX || agent.y !== prevY) {
+                            const target = { x: agent.x * 16, y: agent.y * 16 };
+                            const last = waypoints[waypoints.length - 1] || { x: container.x, y: container.y };
+                            if (Math.abs(target.x - last.x) + Math.abs(target.y - last.y) > 16 * 3) {
+                                // A jump (reconnect, spawn): place the sprite instead of walking across the office.
+                                waypoints.length = 0;
+                                container.setPosition(target.x, target.y);
+                            } else {
+                                waypoints.push(target);
+                                if (waypoints.length === 1) playWalk(target);
                             }
-                        });
-
-                        // Walk animation
-                        if (sprite.type === 'Sprite') {
-                            const s = sprite as Phaser.GameObjects.Sprite;
-                            if (agent.x > prevX) { s.play(`${charKey}-walk-right`, true); s.setFlipX(false); }
-                            else if (agent.x < prevX) { s.play(`${charKey}-walk-right`, true); s.setFlipX(true); }
-                            else if (agent.y > prevY) { s.play(`${charKey}-walk-down`, true); }
-                            else if (agent.y < prevY) { s.play(`${charKey}-walk-up`, true); }
-                            else { s.stop(); }
                         }
+                        applyPose();
+                        drawEnergy(Number(agent.energy ?? 1));
 
-                        // --- EMOTE BUBBLES based on action ---
-                        const emoteMap: Record<string, string> = {
-                            'work': '💻', 'talk': '💬', 'idle': '😌',
-                            'use_tool': '🔧', 'move': '🚶', 'think': '💡'
-                        };
-                        const emote = emoteMap[agent.action] || '';
-                        if (emote && agent.action !== lastAction) {
-                            emoteBubble.setText(emote);
-                            emoteBubble.setVisible(true);
-                            // Auto-hide after 3s
-                            this.time.delayedCall(3000, () => emoteBubble.setVisible(false));
+                        const activity = agent.activity || '';
+                        const phase = agent.phase || '';
+                        if (phase && phase !== lastPhase && PHASE_EMOTES[phase]) {
+                            showEmote(PHASE_EMOTES[phase], false);
+                        } else if (activity !== lastActivity && ACTIVITY_EMOTES[activity]) {
+                            showEmote(ACTIVITY_EMOTES[activity], LASTING_EMOTES.includes(activity));
+                        } else if (activity !== lastActivity && LASTING_EMOTES.includes(lastActivity)) {
+                            emoteBubble.setVisible(false);
                         }
 
                         // Thought bubble: only when the thought changes, and drawn above other agents
@@ -680,6 +811,8 @@ export class OfficeScene extends Phaser.Scene {
 
                         lastAction = agent.action;
                         lastThought = thought;
+                        lastActivity = activity;
+                        lastPhase = phase;
                         prevX = agent.x;
                         prevY = agent.y;
                     });
@@ -692,6 +825,7 @@ export class OfficeScene extends Phaser.Scene {
                         sprite.destroy();
                         this.agentSprites.delete(sessionId);
                     }
+                    this.walkTicks.delete(sessionId);
                     officeStore.removeAgent(sessionId);
                 });
             });
@@ -762,7 +896,8 @@ export class OfficeScene extends Phaser.Scene {
         this.deskLabels.set(agentId, text);
     }
 
-    update() {
+    update(_time: number, delta: number) {
+        this.walkTicks.forEach(tick => tick(delta));
         if (this.cinematicReleaseAt > 0 && Date.now() > this.cinematicReleaseAt) {
             this.cinematicReleaseAt = 0;
             const focusedId = getSnapshot().focusedId;

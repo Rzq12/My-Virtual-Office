@@ -9,6 +9,24 @@ const ACTION_LABELS: Record<string, { icon: string; color: string }> = {
     idle: { icon: '😌 idle', color: '#636e72' }
 };
 
+// What the body is doing wins over the LLM action when it says more (a break, a workflow phase).
+const PHASE_LABELS: Record<string, { icon: string; color: string }> = {
+    plan: { icon: '📝 plan', color: '#81ecec' },
+    research: { icon: '🔎 research', color: '#fdcb6e' },
+    execute: { icon: '⌨️ build', color: '#74b9ff' },
+    review: { icon: '🤝 review', color: '#a29bfe' },
+    finalize: { icon: '🖨️ wrap up', color: '#55efc4' }
+};
+const BREAK_LABELS: Record<string, { icon: string; color: string }> = {
+    drink: { icon: '☕ coffee', color: '#e17055' },
+    snack: { icon: '🍩 snack', color: '#fab1a0' },
+    lounge: { icon: '😌 chill', color: '#b2bec3' }
+};
+
+function statusBadge(agent: { action: string; activity: string; phase: string }) {
+    return BREAK_LABELS[agent.activity] || PHASE_LABELS[agent.phase] || ACTION_LABELS[agent.action] || ACTION_LABELS.idle;
+}
+
 function pct(value: number): string {
     return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
 }
@@ -24,7 +42,7 @@ export function TeamPanel() {
             {agents.length === 0 && <p className="empty">Waiting for the office to open...</p>}
             <div role="list" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {agents.map(agent => {
-                    const action = ACTION_LABELS[agent.action] || ACTION_LABELS.idle;
+                    const action = statusBadge(agent);
                     const selected = agent.id === focusedId;
                     return (
                         <div role="listitem" key={agent.id}>
@@ -61,6 +79,8 @@ export function TeamPanel() {
                         <div>Reputation {pct(focused.reputation)}</div>
                         <div>Risk {pct(focused.riskLevel)}</div>
                         <div>Momentum {pct(focused.momentum)}</div>
+                        <div>Energy {pct(focused.energy)}</div>
+                        <div>Doing: {focused.activity || '—'}</div>
                     </div>
                 </div>
             )}
