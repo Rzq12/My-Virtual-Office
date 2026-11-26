@@ -1,3 +1,14 @@
+# Third-Party Notices
+
+## agent-office
+
+This project is a modified version of [harishkotra/agent-office](https://github.com/harishkotra/agent-office), licensed under the MIT License. The original copyright notice is retained in [LICENSE](LICENSE).
+
+## pixel-agents
+
+The character sprites in `packages/ui/public/characters.png` and `packages/ui/public/assets/characters/char_0.png` … `char_5.png` are taken from [pablodelucca/pixel-agents](https://github.com/pablodelucca/pixel-agents). Those characters are based on [JIK-A-4, Metro City](https://jik-a-4.itch.io/metrocity-free-topdown-character-pack).
+
+```
 MIT License
 
 Copyright (c) 2026 Pablo De Lucca
@@ -19,3 +30,4 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```

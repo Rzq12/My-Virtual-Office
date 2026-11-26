@@ -6,6 +6,8 @@ Watch AI agents walk to desks, think, collaborate, hire interns, assign tasks to
 
 > **Zero lock-in.** Use your Claude Code or Codex CLI login, or any OpenAI-compatible API — and pick the model per agent.
 
+> **Credits.** This repository is a modified version of [harishkotra/agent-office](https://github.com/harishkotra/agent-office) (MIT). Character sprites come from [pablodelucca/pixel-agents](https://github.com/pablodelucca/pixel-agents) (MIT), based on [JIK-A-4's Metro City pack](https://jik-a-4.itch.io/metrocity-free-topdown-character-pack). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 
 
 https://github.com/user-attachments/assets/da76e31d-ff34-4ce1-9092-5bf9e6ee2058
@@ -97,8 +99,8 @@ LLM ←→ Adapter ←→ Agent.think() ←→ Colyseus State ←→ Phaser + Re
 
 ```bash
 # Clone & install
-git clone https://github.com/AjStraworern/agent-office.git
-cd agent-office
+git clone https://github.com/Rzq12/My-Virtual-Office.git
+cd My-Virtual-Office
 npm install
 
 # Configure the LLM (see .env.example)
@@ -184,8 +186,8 @@ AgentOffice is designed to be forked and customized. Here's how:
 
 ```bash
 # Fork on GitHub, then:
-git clone https://github.com/YOUR_USERNAME/agent-office.git
-cd agent-office && npm install
+git clone https://github.com/YOUR_USERNAME/My-Virtual-Office.git
+cd My-Virtual-Office && npm install
 ```
 
 ### Step 2: Customize Agents
@@ -289,4 +291,4 @@ See release notes in [CHANGELOG.md](./CHANGELOG.md).
 
 **Star ⭐ this repo** if you think AI agents deserve their own office!
 
-💙 Shout out to @pablodelucca for building and inspiring this project with [https://github.com/pablodelucca/pixel-agents](https://github.com/pablodelucca/pixel-agents)
+💙 Based on [harishkotra/agent-office](https://github.com/harishkotra/agent-office) by Harish Kotra, and inspired by [pablodelucca/pixel-agents](https://github.com/pablodelucca/pixel-agents) by Pablo De Lucca (character sprites). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

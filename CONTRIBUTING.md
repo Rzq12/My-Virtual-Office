@@ -9,8 +9,8 @@ Thanks for your interest in contributing to AgentOffice! Whether it's fixing a b
 ### 1. Fork & Clone
 
 ```bash
-git clone https://github.com/harishkotra/agent-office.git
-cd agent-office
+git clone https://github.com/Rzq12/My-Virtual-Office.git
+cd My-Virtual-Office
 npm install
 ```
 

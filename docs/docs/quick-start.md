@@ -17,8 +17,8 @@ Welcome to **AgentOffice**! Get your own AI-powered virtual office running in un
 ## Step 1: Clone & Install
 
 ```bash
-git clone https://github.com/AjStraworern/agent-office.git
-cd agent-office
+git clone https://github.com/Rzq12/My-Virtual-Office.git
+cd My-Virtual-Office
 npm install
 ```
 
